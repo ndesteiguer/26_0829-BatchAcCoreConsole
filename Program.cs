@@ -127,8 +127,10 @@ internal static class BatchRunner
     {
         var lispPath = settings.LispFilePath!.Replace("\\", "/").Replace("\"", "\\\"");
         var markerPath = resultPath.Replace("\\", "/").Replace("\"", "\\\"");
-        var save = settings.SaveAfterRun ? "(command \"_.QSAVE\")" : string.Empty;
-        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(setq __batchResult (vl-catch-all-apply (function (lambda () (load \"{lispPath}\") {settings.LispExpression}))))\n(setq __batchMarker (open \"{markerPath}\" \"w\"))\n(if (vl-catch-all-error-p __batchResult) (write-line (strcat \"ERROR: \" (vl-catch-all-error-message __batchResult)) __batchMarker) (write-line \"OK\" __batchMarker))\n(close __batchMarker)\n(if (not (vl-catch-all-error-p __batchResult)) (progn {save}))\n(command \"_.QUIT\")\n";
+        var save = settings.SaveAfterRun ? "(command \"_.QSAVE\")\n" : string.Empty;
+        // Keep the launcher script compatible with the Core Console subset: no Visual LISP / COM functions.
+        // A LISP error prevents execution from reaching the marker, which the runner reports as a failed job.
+        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(load \"{lispPath}\")\n{settings.LispExpression}\n{save}(setq __batchMarker (open \"{markerPath}\" \"w\"))\n(write-line \"OK\" __batchMarker)\n(close __batchMarker)\n(command \"_.QUIT\")\n";
     }
 
     private static IEnumerable<string> GetDrawings(BatchSettings settings)

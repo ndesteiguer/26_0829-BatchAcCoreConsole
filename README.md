@@ -27,7 +27,7 @@ For every drawing, the runner creates a unique temporary `.scr`, launches:
 accoreconsole.exe /i "drawing.dwg" /s "unique-job.scr"
 ```
 
-The script disables dialogs, loads your `.lsp`, evaluates `LispExpression`, optionally saves, and exits AutoCAD. Scripts are deleted after execution by default, so they cannot be re-used accidentally. Set `KeepScripts` to `true` only when troubleshooting.
+The script disables dialogs, loads your `.lsp`, evaluates `LispExpression`, optionally saves, writes a plain AutoLISP completion marker, and exits AutoCAD. It deliberately contains no `vl-`, `vla-`, or `vlax-` calls for Core Console compatibility. If the routine errors before it reaches the marker, the runner marks that drawing as failed. Scripts are deleted after execution by default, so they cannot be re-used accidentally. Set `KeepScripts` to `true` only when troubleshooting.
 
 `summary.json` and a separate stdout/stderr `.log` for each drawing are retained in `WorkDirectory`. Exit code 1 means one or more drawings failed; use `summary.json` to re-run just those files.
 
