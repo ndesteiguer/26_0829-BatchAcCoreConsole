@@ -68,22 +68,13 @@
       (or (cdr (assoc 1 block-record)) "")
       (xref:status block-record)
       (xref:type block-record)
-      (or (cdr (assoc 5 block-record)) "")
-      (or (cdr (assoc 5 insert-data)) "")
       (or (cdr (assoc 8 insert-data)) "")
-      (if (= (cdr (assoc 67 insert-data)) 1) "PaperSpace" "ModelSpace")
       (xref:number (car point))
       (xref:number (cadr point))
       (xref:number (caddr point))
       (xref:number (cdr (assoc 41 insert-data)))
       (xref:number (cdr (assoc 42 insert-data)))
       (xref:number (cdr (assoc 43 insert-data)))
-      ;; Use a numeric literal rather than PI, which may have been redefined
-      ;; by another loaded routine in a shared console session.
-      (xref:number (* 57.29577951308232
-                      (if (numberp (cdr (assoc 50 insert-data)))
-                        (cdr (assoc 50 insert-data))
-                        0.0)))
     )
   )
 )
@@ -97,8 +88,7 @@
       (or (cdr (assoc 1 block-record)) "")
       (xref:status block-record)
       (xref:type block-record)
-      (or (cdr (assoc 5 block-record)) "")
-      "" "" "" "" "" "" "" "" "" ""
+      "" "" "" "" "" "" ""
     )
   )
 )
@@ -144,10 +134,9 @@
   (if (setq stream (open output-path "w"))
     (progn
       (xref:write-row stream
-        (list "DrawingPath" "XrefName" "XrefPath" "Status" "ReferenceType"
-              "BlockRecordHandle" "InsertHandle" "Layer" "Space"
+        (list "DrawingPath" "XrefName" "XrefPath" "Status" "ReferenceType" "Layer"
               "InsertionX" "InsertionY" "InsertionZ"
-              "ScaleX" "ScaleY" "ScaleZ" "RotationDegrees")
+              "ScaleX" "ScaleY" "ScaleZ")
       )
       (setq table-record (tblnext "BLOCK" T))
       (while table-record
