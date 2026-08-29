@@ -34,7 +34,8 @@
 )
 
 (defun xref:flag-set-p (flags bit)
-  (= bit (logand flags bit))
+  ;; A malformed/proxy block record must not abort the export.
+  (and (numberp flags) (= bit (logand flags bit)))
 )
 
 (defun xref:status (block-record / flags)
@@ -54,11 +55,12 @@
 )
 
 (defun xref:number (value)
-  (if value (rtos value 2 8) "")
+  (if (numberp value) (rtos value 2 8) "")
 )
 
 (defun xref:write-insert-row (stream drawing-path block-record insert-data / point)
   (setq point (cdr (assoc 10 insert-data)))
+  (if (not (listp point)) (setq point (list nil nil nil)))
   (xref:write-row stream
     (list
       drawing-path
@@ -76,7 +78,12 @@
       (xref:number (cdr (assoc 41 insert-data)))
       (xref:number (cdr (assoc 42 insert-data)))
       (xref:number (cdr (assoc 43 insert-data)))
-      (xref:number (* 180.0 (/ (or (cdr (assoc 50 insert-data)) 0.0) pi)))
+      ;; Use a numeric literal rather than PI, which may have been redefined
+      ;; by another loaded routine in a shared console session.
+      (xref:number (* 57.29577951308232
+                      (if (numberp (cdr (assoc 50 insert-data)))
+                        (cdr (assoc 50 insert-data))
+                        0.0)))
     )
   )
 )
