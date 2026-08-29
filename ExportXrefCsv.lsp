@@ -33,25 +33,42 @@
   (write-line line stream)
 )
 
-(defun xref:flag-set-p (flags bit)
-  ;; A malformed/proxy block record must not abort the export.
-  (and (numberp flags) (= bit (logand flags bit)))
-)
-
-(defun xref:status (block-record / flags)
-  ;; An unloaded xref has group code 71.  Bit 32 denotes a resolved xref.
-  (setq flags (cdr (assoc 70 block-record)))
-  (cond
-    ((assoc 71 block-record) "Unloaded")
-    ((xref:flag-set-p flags 32) "Loaded")
-    (T "Not Found")
+(defun xref:is-xref-p (name / record flags)
+  (setq record (tblsearch "BLOCK" name))
+  (if record
+    (progn
+      (setq flags (cdr (assoc 70 record)))
+      (or (= 4 (logand 4 flags))
+          (= 8 (logand 8 flags)))
+    )
   )
 )
 
-(defun xref:type (block-record / flags)
-  ;; Bit 8 distinguishes overlay from an attached xref.
-  (setq flags (cdr (assoc 70 block-record)))
-  (if (xref:flag-set-p flags 8) "Overlay" "Attach")
+(defun xref:status (name / entity data flags)
+  ;; Same status test proven in RefRepathCSV_v3.2.lsp:
+  ;; group 71 means unloaded; bit 32 means loaded; otherwise not found.
+  (setq entity (tblobjname "BLOCK" name))
+  (if entity
+    (progn
+      (setq data (entget entity))
+      (if (assoc 71 data)
+        "Unloaded"
+        (progn
+          (setq flags (cdr (assoc 70 (tblsearch "BLOCK" name))))
+          (if (and flags (= 32 (logand 32 flags)))
+            "Loaded"
+            "Not Found"
+          )
+        )
+      )
+    )
+    "Not Found"
+  )
+)
+
+(defun xref:type (name / flags)
+  (setq flags (cdr (assoc 70 (tblsearch "BLOCK" name))))
+  (if (= 8 (logand 8 flags)) "Overlay" "Attach")
 )
 
 (defun xref:number (value)
@@ -66,8 +83,8 @@
       drawing-path
       (cdr (assoc 2 block-record))
       (or (cdr (assoc 1 block-record)) "")
-      (xref:status block-record)
-      (xref:type block-record)
+      (xref:status (cdr (assoc 2 block-record)))
+      (xref:type (cdr (assoc 2 block-record)))
       (or (cdr (assoc 8 insert-data)) "")
       (xref:number (car point))
       (xref:number (cadr point))
@@ -86,8 +103,8 @@
       drawing-path
       (cdr (assoc 2 block-record))
       (or (cdr (assoc 1 block-record)) "")
-      (xref:status block-record)
-      (xref:type block-record)
+      (xref:status (cdr (assoc 2 block-record)))
+      (xref:type (cdr (assoc 2 block-record)))
       "" "" "" "" "" "" ""
     )
   )
@@ -126,7 +143,7 @@
   (strcat (getvar "DWGPREFIX") drawing-name ".xrefs.csv")
 )
 
-(defun c:EXPORTXREFCSV (/ output-path stream drawing-path inserts table-record block-record flags row-count)
+(defun c:EXPORTXREFCSV (/ output-path stream drawing-path inserts table-record row-count)
   (setq output-path (xref:output-path)
         drawing-path (strcat (getvar "DWGPREFIX") (getvar "DWGNAME"))
         inserts (ssget "_X" '((0 . "INSERT")))
@@ -140,13 +157,9 @@
       )
       (setq table-record (tblnext "BLOCK" T))
       (while table-record
-        ;; entget supplies the complete block-table-record data, including
-        ;; group 71 when an XREF is unloaded.
-        (setq block-record (entget (tblobjname "BLOCK" (cdr (assoc 2 table-record)))))
-        (setq flags (cdr (assoc 70 block-record)))
-        (if (xref:flag-set-p flags 4)
+        (if (xref:is-xref-p (cdr (assoc 2 table-record)))
           (progn
-            (xref:write-xref-rows stream drawing-path block-record inserts)
+            (xref:write-xref-rows stream drawing-path table-record inserts)
             (setq row-count (1+ row-count))
           )
         )

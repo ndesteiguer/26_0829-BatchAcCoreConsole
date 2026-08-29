@@ -19,5 +19,6 @@ For each processed drawing, the command creates a CSV beside the drawing:
 
 The CSV contains one row per top-level XREF insertion. XREF definitions with
 no insertion (including unloaded or missing references) remain present as a
-row with blank insertion fields. It reports the definition name/path, loaded
-state, attached-versus-overlay type, layer, insertion point, and scale.
+row with blank insertion fields. It reports the definition name/path, loaded,
+unloaded, or not-found state, attached-versus-overlay type, layer, insertion
+point, and scale.
