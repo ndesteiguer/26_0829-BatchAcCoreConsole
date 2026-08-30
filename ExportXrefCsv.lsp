@@ -5,21 +5,8 @@
 ;;; Output: <drawing folder><drawing name without extension>.xrefs.csv
 
 (defun xref:csv-field (value / index character result)
-  ;; Quote every field and escape embedded quotes per RFC 4180.
-  ;; DXF string fields can occasionally be represented by non-string proxy
-  ;; values. Treat those as blank instead of stopping the entire CSV export.
-  (if (not (stringp value)) (setq value ""))
-  (setq index 1
-        result "")
-  (repeat (strlen value)
-    (setq character (substr value index 1))
-    (if (= character "\"")
-      (setq result (strcat result "\"\""))
-      (setq result (strcat result character))
-    )
-    (setq index (1+ index))
-  )
-  (strcat "\"" result "\"")
+  ;; XREF names and properties are assumed not to contain embedded quotes.
+  (strcat "\"" value "\"")
 )
 
 (defun xref:write-row (stream values / line first-value)
@@ -36,16 +23,12 @@
 )
 
 (defun xref:is-xref-p (name / record flags)
-  (if (stringp name)
+  (setq record (tblsearch "BLOCK" name))
+  (if record
     (progn
-      (setq record (tblsearch "BLOCK" name))
-      (if record
-        (progn
-          (setq flags (cdr (assoc 70 record)))
-          (or (= 4 (logand 4 flags))
-              (= 8 (logand 8 flags)))
-        )
-      )
+      (setq flags (cdr (assoc 70 record)))
+      (or (= 4 (logand 4 flags))
+          (= 8 (logand 8 flags)))
     )
   )
 )
@@ -53,56 +36,45 @@
 (defun xref:status (name / entity data flags)
   ;; Same status test proven in RefRepathCSV_v3.2.lsp:
   ;; group 71 means unloaded; bit 32 means loaded; otherwise not found.
-  (if (not (stringp name))
-    "Not Found"
+  (setq entity (tblobjname "BLOCK" name))
+  (if entity
     (progn
-      (setq entity (tblobjname "BLOCK" name))
-      (if entity
+      (setq data (entget entity))
+      (if (assoc 71 data)
+        "Unloaded"
         (progn
-          (setq data (entget entity))
-          (if (assoc 71 data)
-            "Unloaded"
-            (progn
-              (setq flags (cdr (assoc 70 (tblsearch "BLOCK" name))))
-              (if (and flags (= 32 (logand 32 flags)))
-                "Loaded"
-                "Not Found"
-              )
-            )
+          (setq flags (cdr (assoc 70 (tblsearch "BLOCK" name))))
+          (if (= 32 (logand 32 flags))
+            "Loaded"
+            "Not Found"
           )
         )
-        "Not Found"
       )
     )
+    "Not Found"
   )
 )
 
 (defun xref:type (name / flags)
-  (if (stringp name)
-    (progn
-      (setq flags (cdr (assoc 70 (tblsearch "BLOCK" name))))
-      (if (= 8 (logand 8 flags)) "Overlay" "Attach")
-    )
-    ""
-  )
+  (setq flags (cdr (assoc 70 (tblsearch "BLOCK" name))))
+  (if (= 8 (logand 8 flags)) "Overlay" "Attach")
 )
 
 (defun xref:number (value)
-  (if (numberp value) (rtos value 2 8) "")
+  (rtos value 2 8)
 )
 
 (defun xref:write-insert-row (stream drawing-path block-record insert-data / point xref-name)
   (setq point (cdr (assoc 10 insert-data)))
-  (if (not (listp point)) (setq point (list nil nil nil)))
   (setq xref-name (cdr (assoc 2 block-record)))
   (xref:write-row stream
     (list
       drawing-path
       xref-name
-      (or (cdr (assoc 1 block-record)) "")
+      (cdr (assoc 1 block-record))
       (xref:status xref-name)
       (xref:type xref-name)
-      (or (cdr (assoc 8 insert-data)) "")
+      (cdr (assoc 8 insert-data))
       (xref:number (car point))
       (xref:number (cadr point))
       (xref:number (caddr point))
@@ -120,7 +92,7 @@
     (list
       drawing-path
       xref-name
-      (or (cdr (assoc 1 block-record)) "")
+      (cdr (assoc 1 block-record))
       (xref:status xref-name)
       (xref:type xref-name)
       "" "" "" "" "" "" ""
