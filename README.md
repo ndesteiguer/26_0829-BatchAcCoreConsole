@@ -31,6 +31,16 @@ The script disables dialogs, loads your `.lsp`, evaluates `LispExpression`, opti
 
 `summary.json` and a separate stdout/stderr `.log` for each drawing are retained in `WorkDirectory`. Exit code 1 means one or more drawings failed; use `summary.json` to re-run just those files.
 
+## Quoted AutoLISP arguments
+
+`LispExpression` is a JSON string, so double quotes that AutoLISP needs must be escaped with a backslash. For example:
+
+```json
+"LispExpression": "(PROCESSDRAWING \"C:/Folder/OutputFolder\")"
+```
+
+After the settings file is read, the runner writes the AutoLISP expression as `(PROCESSDRAWING "C:/Folder/OutputFolder")` in the generated script. Forward slashes are recommended in AutoLISP paths; if using Windows backslashes, each one must be escaped for JSON: `C:\\Folder\\OutputFolder`.
+
 ## Operational notes
 
 - Start with `WorkerCount: 1` to validate the LISP routine, then increase gradually. AutoCAD instances consume substantial RAM; 2–4 is usually a sensible starting point.

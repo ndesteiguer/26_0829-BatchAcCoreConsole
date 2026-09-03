@@ -32,7 +32,10 @@ internal static class BatchRunner
         }
         catch (JsonException exception)
         {
-            return Fail($"Invalid JSON: {exception.Message}");
+            var quoteHint = exception.Path?.Equals("$.LispExpression", StringComparison.OrdinalIgnoreCase) == true
+                ? " Quote characters inside LispExpression must be escaped as \\\" in JSON; for example: \"LispExpression\": \"(PROCESSDRAWING \\\"C:/Folder/OutputFolder\\\")\"."
+                : string.Empty;
+            return Fail($"Invalid JSON: {exception.Message}{quoteHint}");
         }
 
         if (settings is null) return Fail("Settings file is empty.");

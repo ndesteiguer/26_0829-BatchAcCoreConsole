@@ -1,0 +1,15 @@
+C:\Users\User1\Documents\ChatGPT\26_0829-BatchAcCoreConsole\obj\Debug\net10.0\BatchAcCoreConsole.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\User1\Documents\ChatGPT\26_0829-BatchAcCoreConsole\obj\Debug\net10.0\BatchAcCoreConsole.AssemblyInfoInputs.cache
+C:\Users\User1\Documents\ChatGPT\26_0829-BatchAcCoreConsole\obj\Debug\net10.0\BatchAcCoreConsole.AssemblyInfo.cs
+C:\Users\User1\Documents\ChatGPT\26_0829-BatchAcCoreConsole\obj\Debug\net10.0\BatchAcCoreConsole.csproj.CoreCompileInputs.cache
+C:\Users\User1\Documents\ChatGPT\26_0829-BatchAcCoreConsole\obj\Debug\net10.0\BatchAcCoreConsole.sourcelink.json
+C:\Users\User1\Documents\ChatGPT\26_0829-BatchAcCoreConsole\bin\Debug\net10.0\BatchAcCoreConsole.exe
+C:\Users\User1\Documents\ChatGPT\26_0829-BatchAcCoreConsole\bin\Debug\net10.0\BatchAcCoreConsole.deps.json
+C:\Users\User1\Documents\ChatGPT\26_0829-BatchAcCoreConsole\bin\Debug\net10.0\BatchAcCoreConsole.runtimeconfig.json
+C:\Users\User1\Documents\ChatGPT\26_0829-BatchAcCoreConsole\bin\Debug\net10.0\BatchAcCoreConsole.dll
+C:\Users\User1\Documents\ChatGPT\26_0829-BatchAcCoreConsole\bin\Debug\net10.0\BatchAcCoreConsole.pdb
+C:\Users\User1\Documents\ChatGPT\26_0829-BatchAcCoreConsole\obj\Debug\net10.0\BatchAcCoreConsole.dll
+C:\Users\User1\Documents\ChatGPT\26_0829-BatchAcCoreConsole\obj\Debug\net10.0\refint\BatchAcCoreConsole.dll
+C:\Users\User1\Documents\ChatGPT\26_0829-BatchAcCoreConsole\obj\Debug\net10.0\BatchAcCoreConsole.pdb
+C:\Users\User1\Documents\ChatGPT\26_0829-BatchAcCoreConsole\obj\Debug\net10.0\BatchAcCoreConsole.genruntimeconfig.cache
+C:\Users\User1\Documents\ChatGPT\26_0829-BatchAcCoreConsole\obj\Debug\net10.0\ref\BatchAcCoreConsole.dll
