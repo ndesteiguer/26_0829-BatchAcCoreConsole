@@ -44,19 +44,29 @@ internal static class BatchRunner
         if (drawings.Length == 0) return Fail("No DWG files were found.");
 
         Directory.CreateDirectory(settings.WorkDirectory!);
+        var isolateRoot = Path.Combine(settings.WorkDirectory!, $".accoreconsole-isolate-{Guid.NewGuid():N}");
         var csvFilesBeforeBatch = SnapshotCsvFiles(settings.WorkDirectory!);
         Console.WriteLine($"Queued {drawings.Length} drawing(s), using {settings.WorkerCount} worker(s).");
         Console.WriteLine($"Work directory: {settings.WorkDirectory}");
 
         var results = new ConcurrentBag<JobResult>();
         using var semaphore = new SemaphoreSlim(settings.WorkerCount);
+        var workerSlots = new ConcurrentBag<int>(Enumerable.Range(1, settings.WorkerCount));
         var jobs = drawings.Select(async drawing =>
         {
             await semaphore.WaitAsync();
-            try { results.Add(await RunJobAsync(settings, drawing)); }
-            finally { semaphore.Release(); }
+            if (!workerSlots.TryTake(out var workerId))
+                throw new InvalidOperationException("A worker slot was unavailable.");
+            try { results.Add(await RunJobAsync(settings, drawing, isolateRoot, workerId)); }
+            finally
+            {
+                workerSlots.Add(workerId);
+                semaphore.Release();
+            }
         });
         await Task.WhenAll(jobs);
+        if (!TryDeleteDirectory(isolateRoot))
+            Console.Error.WriteLine($"Could not remove temporary Core Console profile data: {isolateRoot}");
 
         var ordered = results.OrderBy(r => r.Drawing, StringComparer.OrdinalIgnoreCase).ToArray();
         var succeeded = ordered.Count(result => result.Status == "Succeeded");
@@ -88,24 +98,28 @@ internal static class BatchRunner
         return succeeded == ordered.Length && combinationError is null ? 0 : 1;
     }
 
-    private static async Task<JobResult> RunJobAsync(BatchSettings settings, string drawing)
+    private static async Task<JobResult> RunJobAsync(BatchSettings settings, string drawing, string isolateRoot, int workerId)
     {
         var jobId = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}";
         var scriptPath = Path.Combine(settings.WorkDirectory!, $"{jobId}.scr");
         var logPath = Path.Combine(settings.WorkDirectory!, $"{jobId}.log");
         var resultPath = Path.Combine(settings.WorkDirectory!, $"{jobId}.result");
+        var isolateDirectory = Path.Combine(isolateRoot, $"worker-{workerId}");
+        // Reuse a bounded number of isolated registry identities rather than creating one per drawing.
+        var isolateUserId = $"BatchAcCoreConsole-Worker-{workerId}";
         var started = DateTimeOffset.UtcNow;
         Console.WriteLine($"START {Path.GetFileName(drawing)}");
 
         try
         {
+            Directory.CreateDirectory(isolateDirectory);
             await File.WriteAllTextAsync(scriptPath, BuildScript(settings, resultPath), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             using var process = new Process
             {
                 StartInfo = new ProcessStartInfo
                 {
                     FileName = settings.AcCoreConsolePath!,
-                    Arguments = $"/i \"{drawing}\" /s \"{scriptPath}\"",
+                    Arguments = $"/i \"{drawing}\" /s \"{scriptPath}\" /isolate \"{isolateUserId}\" \"{isolateDirectory}\"",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -155,10 +169,21 @@ internal static class BatchRunner
         var save = settings.SaveAfterRun ? "(command \"_.QSAVE\")\n" : string.Empty;
         // Keep the launcher script compatible with the Core Console subset: no Visual LISP / COM functions.
         // A LISP error prevents execution from reaching the marker, which the runner reports as a failed job.
-        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(load \"{lispPath}\")\n{lispExpression}\n{save}(setq __batchMarker (open \"{markerPath}\" \"w\"))\n(write-line \"OK\" __batchMarker)\n(close __batchMarker)\n(command \"_.QUIT\")\n";
+        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(load \"{lispPath}\")\n{lispExpression}\n{save}(setq __batchMarker (open \"{markerPath}\" \"w\"))\n(write-line \"OK\" __batchMarker)\n(close __batchMarker)\n(command \"_.QUIT\" \"_Yes\")\n";
     }
 
     private static string EscapeLispString(string value) => value.Replace("\\", "/").Replace("\"", "\\\"");
+
+    private static bool TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+            return true;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
 
     private static Dictionary<string, CsvFileStamp> SnapshotCsvFiles(string directory) => Directory
         .EnumerateFiles(directory, "*.csv", SearchOption.TopDirectoryOnly)
