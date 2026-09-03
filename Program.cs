@@ -44,6 +44,7 @@ internal static class BatchRunner
         if (drawings.Length == 0) return Fail("No DWG files were found.");
 
         Directory.CreateDirectory(settings.WorkDirectory!);
+        var csvFilesBeforeBatch = SnapshotCsvFiles(settings.WorkDirectory!);
         Console.WriteLine($"Queued {drawings.Length} drawing(s), using {settings.WorkerCount} worker(s).");
         Console.WriteLine($"Work directory: {settings.WorkDirectory}");
 
@@ -58,11 +59,33 @@ internal static class BatchRunner
         await Task.WhenAll(jobs);
 
         var ordered = results.OrderBy(r => r.Drawing, StringComparer.OrdinalIgnoreCase).ToArray();
+        var succeeded = ordered.Count(result => result.Status == "Succeeded");
+        string? combinedCsvPath = null;
+        string? combinationError = null;
+        if (succeeded == ordered.Length)
+        {
+            try
+            {
+                var batchCsvFiles = GetBatchCsvFiles(settings.WorkDirectory!, csvFilesBeforeBatch).ToArray();
+                combinedCsvPath = await CombineCsvFilesAsync(settings.CombinedCsvOutputDirectory!, batchCsvFiles, drawings.Length);
+                Console.WriteLine($"Combined CSV: {combinedCsvPath}");
+            }
+            catch (Exception exception)
+            {
+                combinationError = exception.Message;
+                Console.Error.WriteLine($"CSV combination failed: {combinationError}");
+            }
+        }
+        else
+        {
+            combinationError = "Combined CSV was not created because one or more drawing jobs failed.";
+            Console.Error.WriteLine(combinationError);
+        }
+
         var summaryPath = Path.Combine(settings.WorkDirectory!, "summary.json");
         await File.WriteAllTextAsync(summaryPath, JsonSerializer.Serialize(ordered, JsonOptions));
-        var succeeded = ordered.Count(result => result.Status == "Succeeded");
         Console.WriteLine($"Finished: {succeeded} succeeded, {ordered.Length - succeeded} failed. Summary: {summaryPath}");
-        return succeeded == ordered.Length ? 0 : 1;
+        return succeeded == ordered.Length && combinationError is null ? 0 : 1;
     }
 
     private static async Task<JobResult> RunJobAsync(BatchSettings settings, string drawing)
@@ -137,6 +160,66 @@ internal static class BatchRunner
 
     private static string EscapeLispString(string value) => value.Replace("\\", "/").Replace("\"", "\\\"");
 
+    private static Dictionary<string, CsvFileStamp> SnapshotCsvFiles(string directory) => Directory
+        .EnumerateFiles(directory, "*.csv", SearchOption.TopDirectoryOnly)
+        .ToDictionary(path => Path.GetFullPath(path), GetCsvFileStamp, StringComparer.OrdinalIgnoreCase);
+
+    private static IEnumerable<string> GetBatchCsvFiles(string directory, IReadOnlyDictionary<string, CsvFileStamp> beforeBatch) => Directory
+        .EnumerateFiles(directory, "*.csv", SearchOption.TopDirectoryOnly)
+        .Select(Path.GetFullPath)
+        .Where(path => !beforeBatch.TryGetValue(path, out var priorStamp) || priorStamp != GetCsvFileStamp(path))
+        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase);
+
+    private static CsvFileStamp GetCsvFileStamp(string path)
+    {
+        var file = new FileInfo(path);
+        return new(file.Length, file.LastWriteTimeUtc);
+    }
+
+    private static async Task<string> CombineCsvFilesAsync(string outputDirectory, IReadOnlyList<string> inputPaths, int expectedFileCount)
+    {
+        if (inputPaths.Count != expectedFileCount)
+            throw new InvalidOperationException($"Expected {expectedFileCount} CSV file(s) from this batch, but found {inputPaths.Count}.");
+
+        Directory.CreateDirectory(outputDirectory);
+        var outputPath = Path.Combine(outputDirectory, $"combined-{DateTime.UtcNow:yyyyMMddHHmmssfff}.csv");
+        var temporaryPath = Path.Combine(outputDirectory, $".{Path.GetFileName(outputPath)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            string? header = null;
+            await using (var writer = new StreamWriter(temporaryPath, append: false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+            {
+                foreach (var inputPath in inputPaths)
+                {
+                    using var reader = new StreamReader(inputPath);
+                    var inputHeader = await reader.ReadLineAsync();
+                    if (string.IsNullOrEmpty(inputHeader))
+                        throw new InvalidOperationException($"CSV file is empty or missing a header: {inputPath}");
+                    if (header is null)
+                    {
+                        header = inputHeader;
+                        await writer.WriteLineAsync(header);
+                    }
+                    else if (!string.Equals(header, inputHeader, StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException($"CSV header does not match the first file: {inputPath}");
+                    }
+
+                    string? row;
+                    while ((row = await reader.ReadLineAsync()) is not null)
+                        await writer.WriteLineAsync(row);
+                }
+            }
+
+            File.Move(temporaryPath, outputPath);
+            return outputPath;
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+        }
+    }
+
     private static IEnumerable<string> GetDrawings(BatchSettings settings)
     {
         if (!string.IsNullOrWhiteSpace(settings.FileListPath))
@@ -172,6 +255,7 @@ internal sealed class BatchSettings
     public bool SaveAfterRun { get; set; } = true;
     public bool KeepScripts { get; set; }
     public string? WorkDirectory { get; set; }
+    public string? CombinedCsvOutputDirectory { get; set; }
 
     public void Normalize(string baseDirectory)
     {
@@ -190,6 +274,9 @@ internal sealed class BatchSettings
         if (WorkerCount is < 1 or > 64) throw new ArgumentException("WorkerCount must be between 1 and 64.");
         if (TimeoutMinutes is < 1 or > 1440) throw new ArgumentException("TimeoutMinutes must be between 1 and 1440.");
         WorkDirectory = Resolve(string.IsNullOrWhiteSpace(WorkDirectory) ? "batch-work" : WorkDirectory, baseDirectory);
+        CombinedCsvOutputDirectory = Resolve(string.IsNullOrWhiteSpace(CombinedCsvOutputDirectory) ? "combined-output" : CombinedCsvOutputDirectory, baseDirectory);
+        if (string.Equals(WorkDirectory, CombinedCsvOutputDirectory, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("CombinedCsvOutputDirectory must be different from WorkDirectory.");
     }
 
     private static string RequiredFile(string? value, string name, string baseDirectory)
@@ -203,3 +290,4 @@ internal sealed class BatchSettings
 }
 
 internal sealed record JobResult(string Drawing, string Status, int? ExitCode, DateTimeOffset StartedUtc, DateTimeOffset FinishedUtc, string LogPath, string? Error);
+internal readonly record struct CsvFileStamp(long Length, DateTime LastWriteUtc);

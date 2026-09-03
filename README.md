@@ -31,6 +31,10 @@ The script disables dialogs, loads your `.lsp`, evaluates a `LispExpression` bui
 
 `summary.json` and a separate stdout/stderr `.log` for each drawing are retained in `WorkDirectory`. Exit code 1 means one or more drawings failed; use `summary.json` to re-run just those files.
 
+## Combined CSV output
+
+Set `CombinedCsvOutputDirectory` to the folder where completed-batch CSVs should be written. After every drawing finishes successfully, the runner identifies the one CSV created or updated for each drawing in `WorkDirectory`, validates that their headers match, and writes a timestamped `combined-*.csv` containing one header row and every data row. The combined CSV is not created if any drawing job fails, a CSV is missing, or the source CSV headers differ.
+
 ## AutoLISP output directory
 
 Set `LispFunction` to the name of a function that accepts one string argument: the output directory. The runner constructs the AutoLISP expression, escaping and converting the resolved `WorkDirectory` to forward slashes. For this configuration:
