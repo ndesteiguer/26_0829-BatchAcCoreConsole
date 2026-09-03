@@ -7,11 +7,12 @@ functions.
 Configure the batch runner with:
 
 ```json
-"LispPath": "C:\\full\\path\\to\\ExportXrefCsv.lsp",
-"LispExpression": "(c:EXPORTXREFCSV)"
+"LispFilePath": "C:\\full\\path\\to\\ExportXrefCsv.lsp",
+"LispFunction": "EXPORTXREFCSV"
 ```
 
-For each processed drawing, the command creates a CSV beside the drawing:
+The runner invokes `(EXPORTXREFCSV "<WorkDirectory>")`. For each processed drawing,
+the function creates a CSV in that directory:
 
 ```text
 <drawing name>.xrefs.csv

@@ -32,10 +32,7 @@ internal static class BatchRunner
         }
         catch (JsonException exception)
         {
-            var quoteHint = exception.Path?.Equals("$.LispExpression", StringComparison.OrdinalIgnoreCase) == true
-                ? " Quote characters inside LispExpression must be escaped as \\\" in JSON; for example: \"LispExpression\": \"(PROCESSDRAWING \\\"C:/Folder/OutputFolder\\\")\"."
-                : string.Empty;
-            return Fail($"Invalid JSON: {exception.Message}{quoteHint}");
+            return Fail($"Invalid JSON: {exception.Message}");
         }
 
         if (settings is null) return Fail("Settings file is empty.");
@@ -128,13 +125,17 @@ internal static class BatchRunner
 
     private static string BuildScript(BatchSettings settings, string resultPath)
     {
-        var lispPath = settings.LispFilePath!.Replace("\\", "/").Replace("\"", "\\\"");
-        var markerPath = resultPath.Replace("\\", "/").Replace("\"", "\\\"");
+        var lispPath = EscapeLispString(settings.LispFilePath!);
+        var workDirectory = EscapeLispString(settings.WorkDirectory!);
+        var markerPath = EscapeLispString(resultPath);
+        var lispExpression = $"({settings.LispFunction} \"{workDirectory}\")";
         var save = settings.SaveAfterRun ? "(command \"_.QSAVE\")\n" : string.Empty;
         // Keep the launcher script compatible with the Core Console subset: no Visual LISP / COM functions.
         // A LISP error prevents execution from reaching the marker, which the runner reports as a failed job.
-        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(load \"{lispPath}\")\n{settings.LispExpression}\n{save}(setq __batchMarker (open \"{markerPath}\" \"w\"))\n(write-line \"OK\" __batchMarker)\n(close __batchMarker)\n(command \"_.QUIT\")\n";
+        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(load \"{lispPath}\")\n{lispExpression}\n{save}(setq __batchMarker (open \"{markerPath}\" \"w\"))\n(write-line \"OK\" __batchMarker)\n(close __batchMarker)\n(command \"_.QUIT\")\n";
     }
+
+    private static string EscapeLispString(string value) => value.Replace("\\", "/").Replace("\"", "\\\"");
 
     private static IEnumerable<string> GetDrawings(BatchSettings settings)
     {
@@ -162,7 +163,7 @@ internal sealed class BatchSettings
 {
     public string? AcCoreConsolePath { get; set; }
     public string? LispFilePath { get; set; }
-    public string? LispExpression { get; set; }
+    public string? LispFunction { get; set; }
     public string? FileListPath { get; set; }
     public string? InputDirectory { get; set; }
     public bool Recursive { get; set; }
@@ -176,8 +177,8 @@ internal sealed class BatchSettings
     {
         AcCoreConsolePath = RequiredFile(AcCoreConsolePath, "AcCoreConsolePath", baseDirectory);
         LispFilePath = RequiredFile(LispFilePath, "LispFilePath", baseDirectory);
-        if (string.IsNullOrWhiteSpace(LispExpression) || LispExpression.Contains('\n') || LispExpression.Contains('\r'))
-            throw new ArgumentException("LispExpression is required and must be a single AutoLISP expression, e.g. (c:MYCOMMAND).");
+        if (string.IsNullOrWhiteSpace(LispFunction) || LispFunction.Any(char.IsWhiteSpace) || LispFunction.IndexOfAny(['(', ')', '"']) >= 0)
+            throw new ArgumentException("LispFunction is required and must be an AutoLISP function name, e.g. PROCESSDRAWING or c:MYCOMMAND.");
         if (string.IsNullOrWhiteSpace(FileListPath) == string.IsNullOrWhiteSpace(InputDirectory))
             throw new ArgumentException("Set exactly one of FileListPath or InputDirectory.");
         if (!string.IsNullOrWhiteSpace(FileListPath)) FileListPath = RequiredFile(FileListPath, "FileListPath", baseDirectory);
