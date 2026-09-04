@@ -1,9 +1,21 @@
-;;; REFREPORTCSV.lsp
+;;; 26_0829-BatchAcCoreConsole compatibility contract
 ;;;
-;;; Writes external reference definitions to CSV.
-;;; Compatible with AutoCAD Core Console; uses native AutoLISP/DXF functions only.
-;;; Command: REFREPORTCSV
-;;; Output: <output folder><drawing name without extension>.REFREPORTCSV.csv
+;;; This file is loaded and run non-interactively by 26_0829-BatchAcCoreConsole
+;;; through AutoCAD Core Console. To use this header in another routine, satisfy
+;;; each requirement below.
+;;;
+;;; 1. Filename and entry function: the .lsp filename, without its extension,
+;;;    must exactly match the public defun to run (case-insensitive). For example,
+;;;    MYREPORT.lsp must define (defun MYREPORT (...)).
+;;; 2. Function signature: that public defun must accept exactly one argument:
+;;;    the output folder path supplied by the batch runner.
+;;; 3. Execution: the function must complete without prompts, dialogs, or other
+;;;    interactive input so it can run in AutoCAD Core Console.
+;;; 4. CSV output: the function must write one CSV named
+;;;    <drawing name without extension>.<function name>.csv in the supplied
+;;;    output folder. The runner discovers and combines CSVs using this format.
+;;; 5. Compatibility: use AutoLISP features supported by the target Core Console
+;;;    version and handle routine-specific errors without user interaction.
 
 (defun xrp:value (value)
   (if value value "")
