@@ -3,6 +3,7 @@
   "LispFilePath": "C:\\BatchJobs\\process-drawing.lsp",
   "LispFunction": "PROCESSDRAWING",
   "FileListPath": "C:\\BatchJobs\\drawings.txt",
+  "SkipInvalidFileListEntries": false,
   "WorkerCount": 4,
   "TimeoutMinutes": 30,
   "SaveAfterRun": true,

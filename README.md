@@ -13,6 +13,8 @@ Windows command-line runner for applying an AutoLISP routine to many DWG files i
    dotnet run --project . -- settings.json
    ```
 
+The runner validates `AcCoreConsolePath`, `LispFilePath`, and `FileListPath` (when used) as existing files before any drawing is processed. It also verifies that `LispFilePath` contains a standard `defun` for `LispFunction` with exactly one argument (local variables after `/` are ignored). Blank and comment rows in `FileListPath` are always ignored. By default, every other entry must point to an existing `.dwg` file and invalid entries are reported before processing starts. Set `SkipInvalidFileListEntries` to `true` to silently skip invalid entries instead. It creates `WorkDirectory` and `CombinedCsvOutputDirectory` when needed.
+
 For deployment, publish a single executable:
 
 ```powershell
@@ -33,7 +35,7 @@ The script disables dialogs, loads your `.lsp`, evaluates a `LispExpression` bui
 
 ## Combined CSV output
 
-Set `CombinedCsvOutputDirectory` to the folder where completed-batch CSVs should be written. After every drawing finishes successfully, the runner identifies the one CSV created or updated for each drawing in `WorkDirectory`, validates that their headers match, and writes a timestamped `combined-*.csv` containing one header row and every data row. The combined CSV is not created if any drawing job fails, a CSV is missing, or the source CSV headers differ.
+Set `CombinedCsvOutputDirectory` to the folder where completed-batch CSVs should be written. After the batch ends, the runner combines every CSV created or updated in `WorkDirectory` into a timestamped `combined-*.csv` containing one header row and every data row. It reports a missing or extra CSV-file count but still writes the combined output from every CSV found. For the bundled XREF routine, it lists missing `<drawing name>.xrefs.csv` files without listing all files that were found. The combined CSV is not created when no CSV files are found or the source CSV headers differ.
 
 ## AutoLISP output directory
 

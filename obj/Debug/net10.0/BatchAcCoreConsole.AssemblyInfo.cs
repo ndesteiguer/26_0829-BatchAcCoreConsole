@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("BatchAcCoreConsole")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+018ee5fa1631e2a3518a3db8278bf61c8869e669")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+5aecf10cce0d8f41064ef34735432f6ce48d94ec")]
 [assembly: System.Reflection.AssemblyProductAttribute("BatchAcCoreConsole")]
 [assembly: System.Reflection.AssemblyTitleAttribute("BatchAcCoreConsole")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

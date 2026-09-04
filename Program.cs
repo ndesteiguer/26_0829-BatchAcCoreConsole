@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 return await BatchRunner.RunAsync(args);
 
@@ -72,24 +73,25 @@ internal static class BatchRunner
         var succeeded = ordered.Count(result => result.Status == "Succeeded");
         string? combinedCsvPath = null;
         string? combinationError = null;
-        if (succeeded == ordered.Length)
+        var batchCsvFiles = GetBatchCsvFiles(settings.WorkDirectory!, csvFilesBeforeBatch).ToArray();
+        if (batchCsvFiles.Length != drawings.Length)
         {
-            try
-            {
-                var batchCsvFiles = GetBatchCsvFiles(settings.WorkDirectory!, csvFilesBeforeBatch).ToArray();
-                combinedCsvPath = await CombineCsvFilesAsync(settings.CombinedCsvOutputDirectory!, batchCsvFiles, drawings.Length);
-                Console.WriteLine($"Combined CSV: {combinedCsvPath}");
-            }
-            catch (Exception exception)
-            {
-                combinationError = exception.Message;
-                Console.Error.WriteLine($"CSV combination failed: {combinationError}");
-            }
-        }
-        else
-        {
-            combinationError = "Combined CSV was not created because one or more drawing jobs failed.";
+            combinationError = $"Expected {drawings.Length} CSV file(s) from this batch, but found {batchCsvFiles.Length}. The combined CSV includes every CSV that was found.";
+            var missingCsvFiles = GetMissingExpectedCsvFiles(settings.WorkDirectory!, drawings, batchCsvFiles);
+            if (missingCsvFiles.Count > 0)
+                combinationError = $"{combinationError}{Environment.NewLine}Missing expected CSV file(s):{Environment.NewLine}{string.Join(Environment.NewLine, missingCsvFiles)}";
             Console.Error.WriteLine(combinationError);
+        }
+
+        try
+        {
+            combinedCsvPath = await CombineCsvFilesAsync(settings.CombinedCsvOutputDirectory!, batchCsvFiles);
+            Console.WriteLine($"Combined CSV: {combinedCsvPath}");
+        }
+        catch (Exception exception)
+        {
+            combinationError = combinationError is null ? exception.Message : $"{combinationError}{Environment.NewLine}{exception.Message}";
+            Console.Error.WriteLine($"CSV combination failed: {exception.Message}");
         }
 
         var summaryPath = Path.Combine(settings.WorkDirectory!, "summary.json");
@@ -195,16 +197,29 @@ internal static class BatchRunner
         .Where(path => !beforeBatch.TryGetValue(path, out var priorStamp) || priorStamp != GetCsvFileStamp(path))
         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase);
 
+    private static IReadOnlyList<string> GetMissingExpectedCsvFiles(string workDirectory, IReadOnlyList<string> drawings, IReadOnlyList<string> batchCsvFiles)
+    {
+        var foundNames = batchCsvFiles
+            .Select(Path.GetFileName)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return drawings
+            .Select(drawing => Path.Combine(workDirectory, $"{Path.GetFileNameWithoutExtension(drawing)}.xrefs.csv"))
+            .Where(path => !foundNames.Contains(Path.GetFileName(path)))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     private static CsvFileStamp GetCsvFileStamp(string path)
     {
         var file = new FileInfo(path);
         return new(file.Length, file.LastWriteTimeUtc);
     }
 
-    private static async Task<string> CombineCsvFilesAsync(string outputDirectory, IReadOnlyList<string> inputPaths, int expectedFileCount)
+    private static async Task<string> CombineCsvFilesAsync(string outputDirectory, IReadOnlyList<string> inputPaths)
     {
-        if (inputPaths.Count != expectedFileCount)
-            throw new InvalidOperationException($"Expected {expectedFileCount} CSV file(s) from this batch, but found {inputPaths.Count}.");
+        if (inputPaths.Count == 0)
+            throw new InvalidOperationException("No CSV files were found for this batch.");
 
         Directory.CreateDirectory(outputDirectory);
         var outputPath = Path.Combine(outputDirectory, $"combined-{DateTime.UtcNow:yyyyMMddHHmmssfff}.csv");
@@ -247,21 +262,55 @@ internal static class BatchRunner
 
     private static IEnumerable<string> GetDrawings(BatchSettings settings)
     {
+        var drawings = new List<string>();
         if (!string.IsNullOrWhiteSpace(settings.FileListPath))
         {
+            var errors = new List<string>();
+            var lineNumber = 0;
             foreach (var line in File.ReadLines(settings.FileListPath!))
             {
-                var path = line.Trim().Trim('"');
-                if (!Path.IsPathFullyQualified(path)) path = Path.Combine(Path.GetDirectoryName(settings.FileListPath!)!, path);
-                if (path.Length > 0 && !path.StartsWith('#') && File.Exists(path) && Path.GetExtension(path).Equals(".dwg", StringComparison.OrdinalIgnoreCase))
-                    yield return Path.GetFullPath(path);
+                lineNumber++;
+                var entry = line.Trim().Trim('"');
+                if (entry.Length == 0 || entry.StartsWith('#')) continue;
+
+                string path;
+                try
+                {
+                    path = Path.IsPathFullyQualified(entry) ? entry : Path.Combine(Path.GetDirectoryName(settings.FileListPath!)!, entry);
+                    path = Path.GetFullPath(path);
+                }
+                catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+                {
+                    if (!settings.SkipInvalidFileListEntries)
+                        errors.Add($"Line {lineNumber}: invalid path '{entry}' ({exception.Message})");
+                    continue;
+                }
+
+                if (!Path.GetExtension(path).Equals(".dwg", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!settings.SkipInvalidFileListEntries)
+                        errors.Add($"Line {lineNumber}: not a .dwg file: {entry}");
+                }
+                else if (!File.Exists(path))
+                {
+                    if (!settings.SkipInvalidFileListEntries)
+                        errors.Add($"Line {lineNumber}: drawing not found: {path}");
+                }
+                else
+                {
+                    drawings.Add(path);
+                }
             }
+
+            if (errors.Count > 0)
+                throw new ArgumentException($"FileListPath contains invalid drawing entries:{Environment.NewLine}{string.Join(Environment.NewLine, errors)}");
         }
         if (!string.IsNullOrWhiteSpace(settings.InputDirectory))
         {
             foreach (var path in Directory.EnumerateFiles(settings.InputDirectory!, "*.dwg", settings.Recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly))
-                yield return path;
+                drawings.Add(path);
         }
+        return drawings;
     }
 
     private static int Fail(string message) { Console.Error.WriteLine($"Error: {message}"); return 2; }
@@ -273,6 +322,7 @@ internal sealed class BatchSettings
     public string? LispFilePath { get; set; }
     public string? LispFunction { get; set; }
     public string? FileListPath { get; set; }
+    public bool SkipInvalidFileListEntries { get; set; }
     public string? InputDirectory { get; set; }
     public bool Recursive { get; set; }
     public int WorkerCount { get; set; } = Math.Max(1, Environment.ProcessorCount / 2);
@@ -288,6 +338,7 @@ internal sealed class BatchSettings
         LispFilePath = RequiredFile(LispFilePath, "LispFilePath", baseDirectory);
         if (string.IsNullOrWhiteSpace(LispFunction) || LispFunction.Any(char.IsWhiteSpace) || LispFunction.IndexOfAny(['(', ')', '"']) >= 0)
             throw new ArgumentException("LispFunction is required and must be an AutoLISP function name, e.g. PROCESSDRAWING or c:MYCOMMAND.");
+        ValidateLispFunctionSignature(LispFilePath, LispFunction);
         if (string.IsNullOrWhiteSpace(FileListPath) == string.IsNullOrWhiteSpace(InputDirectory))
             throw new ArgumentException("Set exactly one of FileListPath or InputDirectory.");
         if (!string.IsNullOrWhiteSpace(FileListPath)) FileListPath = RequiredFile(FileListPath, "FileListPath", baseDirectory);
@@ -309,6 +360,21 @@ internal sealed class BatchSettings
         var path = Resolve(value ?? throw new ArgumentException($"{name} is required."), baseDirectory);
         if (!File.Exists(path)) throw new FileNotFoundException($"{name} not found", path);
         return path;
+    }
+
+    private static void ValidateLispFunctionSignature(string lispFilePath, string lispFunction)
+    {
+        var expression = $@"^[\t ]*\([\t ]*defun[\t ]+{Regex.Escape(lispFunction)}(?=[\t \r\n(])[\t \r\n]+\(([^)]*)\)";
+        var match = Regex.Match(File.ReadAllText(lispFilePath), expression, RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.CultureInvariant);
+        if (!match.Success)
+            throw new ArgumentException($"LispFunction '{lispFunction}' was not found as a defun in {lispFilePath}.");
+
+        var parameters = match.Groups[1].Value
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .TakeWhile(parameter => parameter != "/")
+            .ToArray();
+        if (parameters.Length != 1)
+            throw new ArgumentException($"LispFunction '{lispFunction}' in {lispFilePath} must accept exactly one argument, but its defun declares {parameters.Length}.");
     }
 
     private static string Resolve(string value, string baseDirectory) => Path.GetFullPath(Path.IsPathFullyQualified(value) ? value : Path.Combine(baseDirectory, value));
