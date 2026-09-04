@@ -1,7 +1,6 @@
 {
   "AcCoreConsolePath": "C:\\Program Files\\Autodesk\\AutoCAD 2026\\accoreconsole.exe",
-  "LispFilePath": "C:\\BatchJobs\\process-drawing.lsp",
-  "LispFunction": "PROCESSDRAWING",
+  "LispFilePath": "C:\\BatchJobs\\REFREPORTCSV.lsp",
   "FileListPath": "C:\\BatchJobs\\drawings.txt",
   "SkipInvalidFileListEntries": false,
   "WorkerCount": 4,

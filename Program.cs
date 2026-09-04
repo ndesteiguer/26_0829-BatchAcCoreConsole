@@ -51,6 +51,9 @@ internal static class BatchRunner
             return Fail(exception.Message);
         }
         if (drawings.Length == 0) return Fail("No DWG files were found.");
+        var expectedCsvFiles = GetExpectedCsvFiles(settings.WorkDirectory!, drawings, settings.RoutineFunction);
+        if (expectedCsvFiles.Count != drawings.Length)
+            return Fail("Each drawing must have a unique filename because CSV output names are derived from the drawing filename and LISP function name.");
 
         Directory.CreateDirectory(settings.WorkDirectory!);
         var isolateRoot = Path.Combine(Path.GetTempPath(), $"BatchAcCoreConsole-{Guid.NewGuid():N}");
@@ -81,11 +84,11 @@ internal static class BatchRunner
         var succeeded = ordered.Count(result => result.Status == "Succeeded");
         string? combinedCsvPath = null;
         string? combinationError = null;
-        var batchCsvFiles = GetBatchCsvFiles(settings.WorkDirectory!, csvFilesBeforeBatch).ToArray();
-        if (batchCsvFiles.Length != drawings.Length)
+        var batchCsvFiles = GetBatchCsvFiles(expectedCsvFiles, csvFilesBeforeBatch).ToArray();
+        if (batchCsvFiles.Length != expectedCsvFiles.Count)
         {
-            combinationError = $"Expected {drawings.Length} CSV file(s) from this batch, but found {batchCsvFiles.Length}. The combined CSV includes every CSV that was found.";
-            var missingCsvFiles = GetMissingExpectedCsvFiles(settings.WorkDirectory!, drawings, batchCsvFiles);
+            combinationError = $"Expected {expectedCsvFiles.Count} CSV file(s) from this batch, but found {batchCsvFiles.Length}. The combined CSV includes every expected CSV that was found.";
+            var missingCsvFiles = GetMissingExpectedCsvFiles(expectedCsvFiles, batchCsvFiles);
             if (missingCsvFiles.Count > 0)
                 combinationError = $"{combinationError}{Environment.NewLine}Missing expected CSV file(s):{Environment.NewLine}{string.Join(Environment.NewLine, missingCsvFiles)}";
             Console.Error.WriteLine(combinationError);
@@ -196,7 +199,7 @@ internal static class BatchRunner
         var lispPath = EscapeLispString(settings.LispFilePath!);
         var workDirectory = EscapeLispString(settings.WorkDirectory!);
         var markerPath = EscapeLispString(resultPath);
-        var lispExpression = $"({settings.LispFunction} \"{workDirectory}\")";
+        var lispExpression = $"({settings.RoutineFunction} \"{workDirectory}\")";
         var save = settings.SaveAfterRun ? "(command \"_.QSAVE\")\n" : string.Empty;
         // Keep the launcher script compatible with the Core Console subset: no Visual LISP / COM functions.
         // Do not write an OK marker if the LISP cannot load; Core Console can otherwise exit successfully after a load error.
@@ -220,19 +223,22 @@ internal static class BatchRunner
         .EnumerateFiles(directory, "*.csv", SearchOption.TopDirectoryOnly)
         .ToDictionary(path => Path.GetFullPath(path), GetCsvFileStamp, StringComparer.OrdinalIgnoreCase);
 
-    private static IEnumerable<string> GetBatchCsvFiles(string directory, IReadOnlyDictionary<string, CsvFileStamp> beforeBatch) => Directory
-        .EnumerateFiles(directory, "*.csv", SearchOption.TopDirectoryOnly)
-        .Select(Path.GetFullPath)
-        .Where(path => !beforeBatch.TryGetValue(path, out var priorStamp) || priorStamp != GetCsvFileStamp(path))
-        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase);
+    private static IReadOnlyList<string> GetExpectedCsvFiles(string workDirectory, IReadOnlyList<string> drawings, string routineFunction) => drawings
+        .Select(drawing => Path.Combine(workDirectory, $"{Path.GetFileNameWithoutExtension(drawing)}.{routineFunction}.csv"))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
 
-    private static IReadOnlyList<string> GetMissingExpectedCsvFiles(string workDirectory, IReadOnlyList<string> drawings, IReadOnlyList<string> batchCsvFiles)
+    private static IEnumerable<string> GetBatchCsvFiles(IReadOnlyList<string> expectedCsvFiles, IReadOnlyDictionary<string, CsvFileStamp> beforeBatch) => expectedCsvFiles
+        .Where(File.Exists)
+        .Where(path => !beforeBatch.TryGetValue(path, out var priorStamp) || priorStamp != GetCsvFileStamp(path));
+
+    private static IReadOnlyList<string> GetMissingExpectedCsvFiles(IReadOnlyList<string> expectedCsvFiles, IReadOnlyList<string> batchCsvFiles)
     {
         var foundNames = batchCsvFiles
             .Select(Path.GetFileName)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return drawings
-            .Select(drawing => Path.Combine(workDirectory, $"{Path.GetFileNameWithoutExtension(drawing)}.xrefs.csv"))
+        return expectedCsvFiles
             .Where(path => !foundNames.Contains(Path.GetFileName(path)))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
@@ -349,7 +355,7 @@ internal sealed class BatchSettings
 {
     public string? AcCoreConsolePath { get; set; }
     public string? LispFilePath { get; set; }
-    public string? LispFunction { get; set; }
+    internal string RoutineFunction { get; private set; } = string.Empty;
     public string? FileListPath { get; set; }
     public bool SkipInvalidFileListEntries { get; set; }
     public string? InputDirectory { get; set; }
@@ -366,9 +372,12 @@ internal sealed class BatchSettings
     {
         AcCoreConsolePath = RequiredFile(AcCoreConsolePath, "AcCoreConsolePath", baseDirectory);
         LispFilePath = RequiredFile(LispFilePath, "LispFilePath", baseDirectory);
-        if (string.IsNullOrWhiteSpace(LispFunction) || LispFunction.Any(char.IsWhiteSpace) || LispFunction.IndexOfAny(['(', ')', '"']) >= 0)
-            throw new ArgumentException("LispFunction is required and must be an AutoLISP function name, e.g. PROCESSDRAWING or c:MYCOMMAND.");
-        ValidateLispFunctionSignature(LispFilePath, LispFunction);
+        if (!Path.GetExtension(LispFilePath).Equals(".lsp", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("LispFilePath must point to a .lsp file.");
+        RoutineFunction = Path.GetFileNameWithoutExtension(LispFilePath);
+        if (string.IsNullOrWhiteSpace(RoutineFunction) || RoutineFunction.Any(char.IsWhiteSpace) || RoutineFunction.IndexOfAny(['(', ')', '"']) >= 0)
+            throw new ArgumentException("The filename in LispFilePath must be a valid AutoLISP function name, e.g. PROCESSDRAWING.lsp.");
+        ValidateLispFunctionSignature(LispFilePath, RoutineFunction);
         if (string.IsNullOrWhiteSpace(FileListPath) == string.IsNullOrWhiteSpace(InputDirectory))
             throw new ArgumentException("Set exactly one of FileListPath or InputDirectory.");
         if (!string.IsNullOrWhiteSpace(FileListPath)) FileListPath = RequiredFile(FileListPath, "FileListPath", baseDirectory);
@@ -392,19 +401,19 @@ internal sealed class BatchSettings
         return path;
     }
 
-    private static void ValidateLispFunctionSignature(string lispFilePath, string lispFunction)
+    private static void ValidateLispFunctionSignature(string lispFilePath, string routineFunction)
     {
-        var expression = $@"^[\t ]*\([\t ]*defun[\t ]+{Regex.Escape(lispFunction)}(?=[\t \r\n(])[\t \r\n]+\(([^)]*)\)";
+        var expression = $@"^[\t ]*\([\t ]*defun[\t ]+{Regex.Escape(routineFunction)}(?=[\t \r\n(])[\t \r\n]+\(([^)]*)\)";
         var match = Regex.Match(File.ReadAllText(lispFilePath), expression, RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.CultureInvariant);
         if (!match.Success)
-            throw new ArgumentException($"LispFunction '{lispFunction}' was not found as a defun in {lispFilePath}.");
+            throw new ArgumentException($"The function '{routineFunction}', derived from LispFilePath, was not found as a defun in {lispFilePath}.");
 
         var parameters = match.Groups[1].Value
             .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
             .TakeWhile(parameter => parameter != "/")
             .ToArray();
         if (parameters.Length != 1)
-            throw new ArgumentException($"LispFunction '{lispFunction}' in {lispFilePath} must accept exactly one argument, but its defun declares {parameters.Length}.");
+            throw new ArgumentException($"The function '{routineFunction}' in {lispFilePath} must accept exactly one argument, but its defun declares {parameters.Length}.");
     }
 
     private static string Resolve(string value, string baseDirectory) => Path.GetFullPath(Path.IsPathFullyQualified(value) ? value : Path.Combine(baseDirectory, value));

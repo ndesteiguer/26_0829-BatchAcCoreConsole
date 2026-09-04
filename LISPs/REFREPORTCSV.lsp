@@ -3,7 +3,7 @@
 ;;; Writes external reference definitions to CSV.
 ;;; Compatible with AutoCAD Core Console; uses native AutoLISP/DXF functions only.
 ;;; Command: REFREPORTCSV
-;;; Output: <output folder><drawing name without extension>.xrefs.csv
+;;; Output: <output folder><drawing name without extension>.REFREPORTCSV.csv
 
 (defun xrp:value (value)
   (if value value "")
@@ -101,7 +101,7 @@
   (if (and (/= last-character "\\") (/= last-character "/"))
     (setq output-folder (strcat output-folder "\\"))
   )
-  (strcat output-folder drawing-name ".xrefs.csv")
+  (strcat output-folder drawing-name ".REFREPORTCSV.csv")
 )
 
 (defun xrp:write-reference-row (stream host-path host-name block-record)
