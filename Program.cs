@@ -8,6 +8,8 @@ return await BatchRunner.RunAsync(args);
 
 internal static class BatchRunner
 {
+    private const string LispLoadFailure = "Lisp routine failed to load.";
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -64,15 +66,37 @@ internal static class BatchRunner
         var results = new ConcurrentBag<JobResult>();
         using var semaphore = new SemaphoreSlim(settings.WorkerCount);
         var workerSlots = new ConcurrentBag<int>(Enumerable.Range(1, settings.WorkerCount));
+        var lispLoadFailureDetected = 0;
         var jobs = drawings.Select(async drawing =>
         {
             await semaphore.WaitAsync();
-            if (!workerSlots.TryTake(out var workerId))
-                throw new InvalidOperationException("A worker slot was unavailable.");
-            try { results.Add(await RunJobAsync(settings, drawing, isolateRoot, workerId)); }
+            try
+            {
+                if (Volatile.Read(ref lispLoadFailureDetected) != 0)
+                {
+                    var skippedAt = DateTimeOffset.UtcNow;
+                    const string reason = "Skipped because the LISP routine failed to load in another worker.";
+                    results.Add(new(drawing, "Skipped", null, skippedAt, skippedAt, null, reason));
+                    Console.WriteLine($"SKIPPED {Path.GetFileName(drawing)} ({reason})");
+                    return;
+                }
+
+                if (!workerSlots.TryTake(out var workerId))
+                    throw new InvalidOperationException("A worker slot was unavailable.");
+                try
+                {
+                    var result = await RunJobAsync(settings, drawing, isolateRoot, workerId);
+                    if (string.Equals(result.Error, LispLoadFailure, StringComparison.Ordinal))
+                        Interlocked.Exchange(ref lispLoadFailureDetected, 1);
+                    results.Add(result);
+                }
+                finally
+                {
+                    workerSlots.Add(workerId);
+                }
+            }
             finally
             {
-                workerSlots.Add(workerId);
                 semaphore.Release();
             }
         });
@@ -82,39 +106,49 @@ internal static class BatchRunner
 
         var ordered = results.OrderBy(r => r.Drawing, StringComparer.OrdinalIgnoreCase).ToArray();
         var succeeded = ordered.Count(result => result.Status == "Succeeded");
+        var skipped = ordered.Count(result => result.Status == "Skipped");
+        var failed = ordered.Length - succeeded - skipped;
         string? combinedCsvPath = null;
         string? combinationError = null;
-        var batchCsvFiles = GetBatchCsvFiles(expectedCsvFiles, csvFilesBeforeBatch).ToArray();
-        if (batchCsvFiles.Length != expectedCsvFiles.Count)
+        if (Volatile.Read(ref lispLoadFailureDetected) != 0)
         {
-            combinationError = $"Expected {expectedCsvFiles.Count} CSV file(s) from this batch, but found {batchCsvFiles.Length}. The combined CSV includes every expected CSV that was found.";
-            var missingCsvFiles = GetMissingExpectedCsvFiles(expectedCsvFiles, batchCsvFiles);
-            if (missingCsvFiles.Count > 0)
-                combinationError = $"{combinationError}{Environment.NewLine}Missing expected CSV file(s):{Environment.NewLine}{string.Join(Environment.NewLine, missingCsvFiles)}";
-            Console.Error.WriteLine(combinationError);
+            Console.Error.WriteLine("CSV combination skipped because the LISP routine failed to load.");
         }
+        else
+        {
+            var batchCsvFiles = GetBatchCsvFiles(expectedCsvFiles, csvFilesBeforeBatch).ToArray();
+            if (batchCsvFiles.Length != expectedCsvFiles.Count)
+            {
+                combinationError = $"Expected {expectedCsvFiles.Count} CSV file(s) from this batch, but found {batchCsvFiles.Length}. The combined CSV includes every expected CSV that was found.";
+                var missingCsvFiles = GetMissingExpectedCsvFiles(expectedCsvFiles, batchCsvFiles);
+                if (missingCsvFiles.Count > 0)
+                    combinationError = $"{combinationError}{Environment.NewLine}Missing expected CSV file(s):{Environment.NewLine}{string.Join(Environment.NewLine, missingCsvFiles)}";
+                Console.Error.WriteLine(combinationError);
+            }
 
-        try
-        {
-            combinedCsvPath = await CombineCsvFilesAsync(settings.CombinedCsvOutputDirectory!, batchCsvFiles);
-            Console.WriteLine($"Combined CSV: {combinedCsvPath}");
-        }
-        catch (Exception exception)
-        {
-            combinationError = combinationError is null ? exception.Message : $"{combinationError}{Environment.NewLine}{exception.Message}";
-            Console.Error.WriteLine($"CSV combination failed: {exception.Message}");
+            try
+            {
+                combinedCsvPath = await CombineCsvFilesAsync(settings.CombinedCsvOutputDirectory!, batchCsvFiles);
+                Console.WriteLine($"Combined CSV: {combinedCsvPath}");
+            }
+            catch (Exception exception)
+            {
+                combinationError = combinationError is null ? exception.Message : $"{combinationError}{Environment.NewLine}{exception.Message}";
+                Console.Error.WriteLine($"CSV combination failed: {exception.Message}");
+            }
         }
 
         var summaryPath = Path.Combine(settings.WorkDirectory!, "summary.json");
         await File.WriteAllTextAsync(summaryPath, JsonSerializer.Serialize(ordered, JsonOptions));
-        Console.WriteLine($"Finished: {succeeded} succeeded, {ordered.Length - succeeded} failed. Summary: {summaryPath}");
+        Console.WriteLine($"Finished: {succeeded} succeeded, {failed} failed, {skipped} skipped. Summary: {summaryPath}");
         return succeeded == ordered.Length && combinationError is null ? 0 : 1;
     }
 
     private static async Task<JobResult> RunJobAsync(BatchSettings settings, string drawing, string isolateRoot, int workerId)
     {
         var jobId = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}";
-        var scriptPath = Path.Combine(settings.WorkDirectory!, $"{jobId}.scr");
+        var scriptDirectory = settings.KeepScripts ? settings.WorkDirectory! : isolateRoot;
+        var scriptPath = Path.Combine(scriptDirectory, $"{jobId}.scr");
         var logPath = settings.CreateLogFiles ? Path.Combine(settings.WorkDirectory!, $"{jobId}.log") : null;
         var resultPath = Path.Combine(isolateRoot, $"{jobId}.result");
         var isolateDirectory = Path.Combine(isolateRoot, $"worker-{workerId}");
@@ -168,7 +202,7 @@ internal static class BatchRunner
         }
         finally
         {
-            // A fresh script is made for every run. Retain failures only when explicitly requested.
+            // A fresh script is made for every run. Retain scripts in WorkDirectory only when explicitly requested.
             if (!settings.KeepScripts && File.Exists(scriptPath)) File.Delete(scriptPath);
             if (File.Exists(resultPath)) File.Delete(resultPath);
         }
@@ -203,7 +237,7 @@ internal static class BatchRunner
         var save = settings.SaveAfterRun ? "(command \"_.QSAVE\")\n" : string.Empty;
         // Keep the launcher script compatible with the Core Console subset: no Visual LISP / COM functions.
         // Do not write an OK marker if the LISP cannot load; Core Console can otherwise exit successfully after a load error.
-        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(if (load \"{lispPath}\")\n  (progn\n    {lispExpression}\n    {save}(setq __batchMarker (open \"{markerPath}\" \"w\"))\n    (write-line \"OK\" __batchMarker)\n    (close __batchMarker)\n  )\n  (progn\n    (setq __batchMarker (open \"{markerPath}\" \"w\"))\n    (write-line \"Lisp routine failed to load.\" __batchMarker)\n    (close __batchMarker)\n  )\n)\n(command \"_.QUIT\" \"_Yes\")\n";
+        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(if (load \"{lispPath}\")\n  (progn\n    {lispExpression}\n    {save}(setq __batchMarker (open \"{markerPath}\" \"w\"))\n    (write-line \"OK\" __batchMarker)\n    (close __batchMarker)\n  )\n  (progn\n    (setq __batchMarker (open \"{markerPath}\" \"w\"))\n    (write-line \"{LispLoadFailure}\" __batchMarker)\n    (close __batchMarker)\n  )\n)\n(command \"_.QUIT\" \"_Yes\")\n";
     }
 
     private static string EscapeLispString(string value) => value.Replace("\\", "/").Replace("\"", "\\\"");
