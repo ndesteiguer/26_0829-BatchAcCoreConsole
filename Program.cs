@@ -178,8 +178,8 @@ internal static class BatchRunner
         var lispExpression = $"({settings.LispFunction} \"{workDirectory}\")";
         var save = settings.SaveAfterRun ? "(command \"_.QSAVE\")\n" : string.Empty;
         // Keep the launcher script compatible with the Core Console subset: no Visual LISP / COM functions.
-        // A LISP error prevents execution from reaching the marker, which the runner reports as a failed job.
-        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(load \"{lispPath}\")\n{lispExpression}\n{save}(setq __batchMarker (open \"{markerPath}\" \"w\"))\n(write-line \"OK\" __batchMarker)\n(close __batchMarker)\n(command \"_.QUIT\" \"_Yes\")\n";
+        // Do not write an OK marker if the LISP cannot load; Core Console can otherwise exit successfully after a load error.
+        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(if (load \"{lispPath}\")\n  (progn\n    {lispExpression}\n    {save}(setq __batchMarker (open \"{markerPath}\" \"w\"))\n    (write-line \"OK\" __batchMarker)\n    (close __batchMarker)\n  )\n  (progn\n    (setq __batchMarker (open \"{markerPath}\" \"w\"))\n    (write-line \"Lisp routine failed to load.\" __batchMarker)\n    (close __batchMarker)\n  )\n)\n(command \"_.QUIT\" \"_Yes\")\n";
     }
 
     private static string EscapeLispString(string value) => value.Replace("\\", "/").Replace("\"", "\\\"");
