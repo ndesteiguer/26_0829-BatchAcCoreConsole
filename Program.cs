@@ -45,7 +45,7 @@ internal static class BatchRunner
         if (drawings.Length == 0) return Fail("No DWG files were found.");
 
         Directory.CreateDirectory(settings.WorkDirectory!);
-        var isolateRoot = Path.Combine(settings.WorkDirectory!, $".accoreconsole-isolate-{Guid.NewGuid():N}");
+        var isolateRoot = Path.Combine(Path.GetTempPath(), $"BatchAcCoreConsole-{Guid.NewGuid():N}");
         var csvFilesBeforeBatch = SnapshotCsvFiles(settings.WorkDirectory!);
         Console.WriteLine($"Queued {drawings.Length} drawing(s), using {settings.WorkerCount} worker(s).");
         Console.WriteLine($"Work directory: {settings.WorkDirectory}");
