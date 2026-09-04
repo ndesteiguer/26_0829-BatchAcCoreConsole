@@ -41,7 +41,15 @@ internal static class BatchRunner
         try { settings.Normalize(baseDirectory); }
         catch (Exception exception) { return Fail(exception.Message); }
 
-        var drawings = GetDrawings(settings).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        string[] drawings;
+        try
+        {
+            drawings = GetDrawings(settings).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+        catch (ArgumentException exception)
+        {
+            return Fail(exception.Message);
+        }
         if (drawings.Length == 0) return Fail("No DWG files were found.");
 
         Directory.CreateDirectory(settings.WorkDirectory!);
