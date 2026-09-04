@@ -31,7 +31,7 @@ accoreconsole.exe /i "drawing.dwg" /s "unique-job.scr"
 
 The script disables dialogs, loads your `.lsp`, evaluates a `LispExpression` built from `LispFunction` and `WorkDirectory`, optionally saves, writes a plain AutoLISP completion marker, and exits AutoCAD. It deliberately contains no `vl-`, `vla-`, or `vlax-` calls for Core Console compatibility. If the routine errors before it reaches the marker, the runner marks that drawing as failed. Scripts are deleted after execution by default, so they cannot be re-used accidentally. Set `KeepScripts` to `true` only when troubleshooting.
 
-Each worker runs Core Console with its own temporary isolated profile under the Windows temporary directory. The profiles and short-lived per-drawing completion markers are removed after the batch finishes and are kept outside `WorkDirectory` so they do not mix with retained batch artifacts or ordinary folder synchronization.
+Each batch creates a temporary root under the Windows temporary directory, for example `%TEMP%\BatchAcCoreConsole-<unique-batch-id>`. Each worker runs Core Console with its isolated profile in a `worker-<n>` subfolder, and the short-lived per-drawing completion markers are written directly in the temporary root. The entire temporary root is removed after the batch finishes, and remains outside `WorkDirectory` so its files do not mix with retained batch artifacts or ordinary folder synchronization.
 
 `summary.json` and a separate stdout/stderr `.log` for each drawing are retained in `WorkDirectory`. Exit code 1 means one or more drawings failed; use `summary.json` to re-run just those files.
 
