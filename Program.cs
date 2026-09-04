@@ -112,7 +112,7 @@ internal static class BatchRunner
     {
         var jobId = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}";
         var scriptPath = Path.Combine(settings.WorkDirectory!, $"{jobId}.scr");
-        var logPath = Path.Combine(settings.WorkDirectory!, $"{jobId}.log");
+        var logPath = settings.CreateLogFiles ? Path.Combine(settings.WorkDirectory!, $"{jobId}.log") : null;
         var resultPath = Path.Combine(isolateRoot, $"{jobId}.result");
         var isolateDirectory = Path.Combine(isolateRoot, $"worker-{workerId}");
         // Reuse a bounded number of isolated registry identities rather than creating one per drawing.
@@ -137,19 +137,20 @@ internal static class BatchRunner
                 }
             };
             process.Start();
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
+            var output = CaptureProcessOutputAsync(process, settings.CreateLogFiles);
             var completion = process.WaitForExitAsync();
             var exited = await Task.WhenAny(completion, Task.Delay(TimeSpan.FromMinutes(settings.TimeoutMinutes))) == completion;
             if (!exited)
             {
                 process.Kill(entireProcessTree: true);
                 await process.WaitForExitAsync();
-                await File.WriteAllTextAsync(logPath, (await stdout) + Environment.NewLine + (await stderr));
+                var outputText = await output;
+                if (outputText is not null) await File.WriteAllTextAsync(logPath!, outputText);
                 return new(drawing, "TimedOut", null, started, DateTimeOffset.UtcNow, logPath, "Worker exceeded configured timeout.");
             }
 
-            await File.WriteAllTextAsync(logPath, (await stdout) + Environment.NewLine + (await stderr));
+            var completedOutput = await output;
+            if (completedOutput is not null) await File.WriteAllTextAsync(logPath!, completedOutput);
             var lispResult = File.Exists(resultPath) ? await File.ReadAllTextAsync(resultPath) : "No completion marker was written.";
             File.Delete(resultPath);
             var status = process.ExitCode == 0 && lispResult.Trim() == "OK" ? "Succeeded" : "Failed";
@@ -158,7 +159,7 @@ internal static class BatchRunner
         }
         catch (Exception exception)
         {
-            await File.WriteAllTextAsync(logPath, exception.ToString());
+            if (logPath is not null) await File.WriteAllTextAsync(logPath, exception.ToString());
             Console.Error.WriteLine($"FAILED {Path.GetFileName(drawing)}: {exception.Message}");
             return new(drawing, "Failed", null, started, DateTimeOffset.UtcNow, logPath, exception.Message);
         }
@@ -168,6 +169,26 @@ internal static class BatchRunner
             if (!settings.KeepScripts && File.Exists(scriptPath)) File.Delete(scriptPath);
             if (File.Exists(resultPath)) File.Delete(resultPath);
         }
+    }
+
+    private static async Task<string?> CaptureProcessOutputAsync(Process process, bool retainOutput)
+    {
+        if (retainOutput)
+        {
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            await Task.WhenAll(stdout, stderr);
+            return (await stdout) + Environment.NewLine + (await stderr);
+        }
+
+        await Task.WhenAll(DrainAsync(process.StandardOutput), DrainAsync(process.StandardError));
+        return null;
+    }
+
+    private static async Task DrainAsync(StreamReader reader)
+    {
+        var buffer = new char[8192];
+        while (await reader.ReadAsync(buffer, 0, buffer.Length) > 0) { }
     }
 
     private static string BuildScript(BatchSettings settings, string resultPath)
@@ -337,6 +358,7 @@ internal sealed class BatchSettings
     public int TimeoutMinutes { get; set; } = 30;
     public bool SaveAfterRun { get; set; } = true;
     public bool KeepScripts { get; set; }
+    public bool CreateLogFiles { get; set; } = true;
     public string? WorkDirectory { get; set; }
     public string? CombinedCsvOutputDirectory { get; set; }
 
@@ -388,5 +410,5 @@ internal sealed class BatchSettings
     private static string Resolve(string value, string baseDirectory) => Path.GetFullPath(Path.IsPathFullyQualified(value) ? value : Path.Combine(baseDirectory, value));
 }
 
-internal sealed record JobResult(string Drawing, string Status, int? ExitCode, DateTimeOffset StartedUtc, DateTimeOffset FinishedUtc, string LogPath, string? Error);
+internal sealed record JobResult(string Drawing, string Status, int? ExitCode, DateTimeOffset StartedUtc, DateTimeOffset FinishedUtc, string? LogPath, string? Error);
 internal readonly record struct CsvFileStamp(long Length, DateTime LastWriteUtc);

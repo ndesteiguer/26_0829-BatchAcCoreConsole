@@ -8,6 +8,7 @@
   "TimeoutMinutes": 30,
   "SaveAfterRun": true,
   "KeepScripts": false,
+  "CreateLogFiles": true,
   "WorkDirectory": "C:\\BatchJobs\\work",
   "CombinedCsvOutputDirectory": "C:\\BatchJobs\\combined"
 }

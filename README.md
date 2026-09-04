@@ -33,7 +33,7 @@ The script disables dialogs, loads your `.lsp`, evaluates a `LispExpression` bui
 
 Each batch creates a temporary root under the Windows temporary directory, for example `%TEMP%\BatchAcCoreConsole-<unique-batch-id>`. Each worker runs Core Console with its isolated profile in a `worker-<n>` subfolder, and the short-lived per-drawing completion markers are written directly in the temporary root. The entire temporary root is removed after the batch finishes, and remains outside `WorkDirectory` so its files do not mix with retained batch artifacts or ordinary folder synchronization.
 
-`summary.json` and a separate stdout/stderr `.log` for each drawing are retained in `WorkDirectory`. Exit code 1 means one or more drawings failed; use `summary.json` to re-run just those files.
+`summary.json` is retained in `WorkDirectory`. By default, a separate stdout/stderr `.log` is also retained for each drawing. Set `CreateLogFiles` to `false` in `settings.json` to discard that output after it is drained, avoiding per-drawing log files and their synchronization events. Exit code 1 means one or more drawings failed; use `summary.json` to re-run just those files.
 
 ## Combined CSV output
 
