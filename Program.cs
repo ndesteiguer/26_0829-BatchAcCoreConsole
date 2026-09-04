@@ -113,7 +113,7 @@ internal static class BatchRunner
         var jobId = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}";
         var scriptPath = Path.Combine(settings.WorkDirectory!, $"{jobId}.scr");
         var logPath = Path.Combine(settings.WorkDirectory!, $"{jobId}.log");
-        var resultPath = Path.Combine(settings.WorkDirectory!, $"{jobId}.result");
+        var resultPath = Path.Combine(isolateRoot, $"{jobId}.result");
         var isolateDirectory = Path.Combine(isolateRoot, $"worker-{workerId}");
         // Reuse a bounded number of isolated registry identities rather than creating one per drawing.
         var isolateUserId = $"BatchAcCoreConsole-Worker-{workerId}";
