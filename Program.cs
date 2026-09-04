@@ -110,9 +110,12 @@ internal static class BatchRunner
         var failed = ordered.Length - succeeded - skipped;
         string? combinedCsvPath = null;
         string? combinationError = null;
+        var issues = new List<string>();
         if (Volatile.Read(ref lispLoadFailureDetected) != 0)
         {
-            Console.Error.WriteLine("CSV combination skipped because the LISP routine failed to load.");
+            const string issue = "CSV combination skipped because the LISP routine failed to load.";
+            issues.Add(issue);
+            Console.Error.WriteLine(issue);
         }
         else
         {
@@ -123,6 +126,7 @@ internal static class BatchRunner
                 var missingCsvFiles = GetMissingExpectedCsvFiles(expectedCsvFiles, batchCsvFiles);
                 if (missingCsvFiles.Count > 0)
                     combinationError = $"{combinationError}{Environment.NewLine}Missing expected CSV file(s):{Environment.NewLine}{string.Join(Environment.NewLine, missingCsvFiles)}";
+                issues.Add(combinationError);
                 Console.Error.WriteLine(combinationError);
             }
 
@@ -134,12 +138,26 @@ internal static class BatchRunner
             catch (Exception exception)
             {
                 combinationError = combinationError is null ? exception.Message : $"{combinationError}{Environment.NewLine}{exception.Message}";
-                Console.Error.WriteLine($"CSV combination failed: {exception.Message}");
+                var issue = $"CSV combination failed: {exception.Message}";
+                issues.Add(issue);
+                Console.Error.WriteLine(issue);
             }
         }
 
         var summaryPath = Path.Combine(settings.WorkDirectory!, "summary.json");
         await File.WriteAllTextAsync(summaryPath, JsonSerializer.Serialize(ordered, JsonOptions));
+        var readableSummaryPath = Path.Combine(settings.CombinedCsvOutputDirectory!, $"batch-summary-{DateTime.UtcNow:yyyyMMddHHmmssfff}.txt");
+        try
+        {
+            Directory.CreateDirectory(settings.CombinedCsvOutputDirectory!);
+            await File.WriteAllTextAsync(readableSummaryPath, BuildReadableSummary(ordered, succeeded, failed, skipped, combinedCsvPath, issues, summaryPath));
+            Console.WriteLine($"Batch summary: {readableSummaryPath}");
+        }
+        catch (Exception exception)
+        {
+            combinationError = combinationError is null ? exception.Message : $"{combinationError}{Environment.NewLine}{exception.Message}";
+            Console.Error.WriteLine($"Could not write batch summary: {exception.Message}");
+        }
         Console.WriteLine($"Finished: {succeeded} succeeded, {failed} failed, {skipped} skipped. Summary: {summaryPath}");
         return succeeded == ordered.Length && combinationError is null ? 0 : 1;
     }
@@ -381,6 +399,63 @@ internal static class BatchRunner
         }
         return drawings;
     }
+
+    private static string BuildReadableSummary(
+        IReadOnlyList<JobResult> results,
+        int succeeded,
+        int failed,
+        int skipped,
+        string? combinedCsvPath,
+        IReadOnlyList<string> issues,
+        string jsonSummaryPath)
+    {
+        var summary = new StringBuilder();
+        summary.AppendLine("Batch AcCoreConsole summary");
+        summary.AppendLine(new string('=', 26));
+        summary.AppendLine($"Completed (UTC): {DateTimeOffset.UtcNow:O}");
+        summary.AppendLine($"Results: {succeeded} succeeded, {failed} failed, {skipped} skipped");
+        summary.AppendLine($"Structured summary: {jsonSummaryPath}");
+        summary.AppendLine($"Combined CSV: {combinedCsvPath ?? "Not created"}");
+
+        summary.AppendLine();
+        summary.AppendLine($"Batch issues ({issues.Count}):");
+        if (issues.Count == 0)
+            summary.AppendLine("- None");
+        else
+            foreach (var issue in issues)
+                summary.AppendLine($"- {issue.Replace(Environment.NewLine, Environment.NewLine + "  ")}");
+
+        var successfulDrawings = results.Where(result => result.Status == "Succeeded").ToArray();
+        summary.AppendLine();
+        summary.AppendLine($"Succeeded drawings ({successfulDrawings.Length}):");
+        if (successfulDrawings.Length == 0)
+            summary.AppendLine("- None");
+        else
+            foreach (var result in successfulDrawings)
+                summary.AppendLine($"- {result.Drawing}");
+
+        var failedDrawings = results.Where(result => result.Status is not "Succeeded" and not "Skipped").ToArray();
+        summary.AppendLine();
+        summary.AppendLine($"Failed drawings ({failedDrawings.Length}):");
+        if (failedDrawings.Length == 0)
+            summary.AppendLine("- None");
+        else
+            foreach (var result in failedDrawings)
+                summary.AppendLine($"- {result.Drawing} (exit {result.ExitCode?.ToString() ?? "not started"}): {result.Error ?? "No reason was reported."}{FormatLogPath(result.LogPath)}");
+
+        var skippedDrawings = results.Where(result => result.Status == "Skipped").ToArray();
+        summary.AppendLine();
+        summary.AppendLine($"Skipped drawings ({skippedDrawings.Length}):");
+        if (skippedDrawings.Length == 0)
+            summary.AppendLine("- None");
+        else
+            foreach (var result in skippedDrawings)
+                summary.AppendLine($"- {result.Drawing}: {result.Error ?? "No reason was reported."}");
+
+        return summary.ToString();
+    }
+
+    private static string FormatLogPath(string? logPath) => logPath is null ? string.Empty : $" (log: {logPath})";
 
     private static int Fail(string message) { Console.Error.WriteLine($"Error: {message}"); return 2; }
 }
