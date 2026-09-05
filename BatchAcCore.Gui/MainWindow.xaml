@@ -4,7 +4,7 @@
         Title="Batch AcCoreConsole" Height="840" Width="1180" MinHeight="650" MinWidth="900">
     <DockPanel Margin="16">
         <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,12">
-            <Button Content="New profile" Click="NewProfile_Click" Padding="12,5" Margin="0,0,8,0" IsEnabled="{Binding CanEdit}" />
+            <Button Content="Reset profile" Click="NewProfile_Click" Padding="12,5" Margin="0,0,8,0" IsEnabled="{Binding CanEdit}" />
             <Button Content="Open profile" Click="OpenProfile_Click" Padding="12,5" Margin="0,0,8,0" />
             <Button Content="Save profile" Click="SaveProfile_Click" Padding="12,5" Margin="0,0,8,0" />
             <Button Content="Save profile as..." Click="SaveProfileAs_Click" Padding="12,5" Margin="0,0,24,0" />
