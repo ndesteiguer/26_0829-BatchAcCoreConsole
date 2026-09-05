@@ -48,6 +48,7 @@ The agreed product, functional, and architectural scope is recorded in:
 - [GUI project outline](GUI_PROJECT_OUTLINE.md)
 - [GUI functional specification](GUI_FUNCTIONAL_SPEC.md)
 - [GUI architecture plan](GUI_ARCHITECTURE_PLAN.md)
+- [GUI workstation test checklist](GUI_WORKSTATION_TEST.md)
 
 ## Verification
 
