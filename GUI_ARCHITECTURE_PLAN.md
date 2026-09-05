@@ -58,7 +58,7 @@ The core returns information; front ends decide how to render it. Console format
 
 ## Execution design
 
-The core owns a per-run registry of `Process` instances it started. This is required so cancellation can act only on child Core Console processes belonging to the active batch. It does not search for or terminate unrelated `accoreconsole.exe` processes.
+The core observes processes it starts for result reporting and timeout handling. Cancellation stops the scheduler from starting queued jobs but does not terminate active `accoreconsole.exe` processes. This preserves normal process completion and avoids ambiguous DWG state from forced termination.
 
 Concurrency remains bounded by `WorkerCount`. Results are accumulated in a thread-safe collection and sorted deterministically before writing the summary and reporting final results. Progress notifications are emitted after state changes and must not block job execution.
 
@@ -85,7 +85,7 @@ WPF view models depend on `BatchAcCore.Core` contracts only. File/folder selecti
 ## Test plan before GUI work
 
 - Unit tests for profile validation, LISP signature validation, drawing discovery, AutoLISP path escaping, CSV-header validation, and script generation.
-- Runner tests using a controllable fake process launcher to cover success, nonzero exit, missing completion marker, timeout, exception, concurrency, and cancellation states.
+- Runner tests using a controllable fake process launcher to cover success, nonzero exit, missing completion marker, timeout, exception, concurrency, and cancellation that stops queued jobs while active jobs complete normally.
 - CLI compatibility tests for old valid profiles, error codes, and summary output.
 - Manual workstation matrix: standard user, local storage, UNC storage, non-default AutoCAD installation, invalid/missing Core Console, inaccessible output directory, and one successful representative LISP batch.
 
@@ -93,6 +93,6 @@ WPF view models depend on `BatchAcCore.Core` contracts only. File/folder selecti
 
 1. Add a solution and Core project; move logic without behavior changes and cover it with tests.
 2. Introduce typed validation/preflight and structured progress while retaining CLI text output.
-3. Introduce cancellation/process ownership with documented semantics and tests.
+3. Introduce queued-job cancellation with documented semantics and tests.
 4. Add the WPF project and implement profile/preflight/queue/run/results views.
 5. Validate deployment and support diagnostics on representative workstations.
