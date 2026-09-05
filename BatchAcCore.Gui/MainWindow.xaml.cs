@@ -14,7 +14,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 {
     private static readonly JsonSerializerOptions ProfileJsonOptions = new() { WriteIndented = true };
     private string? _profilePath;
-    private BatchSettings _settings = new();
+    private BatchSettings _settings = CreateNewSettings();
     private bool _canRun;
     private bool _isRunning;
     private string _outputText = string.Empty;
@@ -34,6 +34,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         get => _settings;
         private set
         {
+            if (!string.IsNullOrWhiteSpace(value.FileListPath)) value.Recursive = false;
             if (!SetField(ref _settings, value)) return;
             OnPropertyChanged(nameof(IsFileListInput));
             OnPropertyChanged(nameof(IsInputDirectoryInput));
@@ -70,6 +71,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             if (!value) return;
             Settings.InputDirectory = null;
+            Settings.Recursive = false;
             NotifyInputMethodChanged();
         }
     }
@@ -109,7 +111,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void NewProfile_Click(object sender, RoutedEventArgs e)
     {
-        Settings = new BatchSettings();
+        Settings = CreateNewSettings();
         _profilePath = null;
         ClearRunState();
         RunSummary = "New profile. Enter the required paths, then run preflight.";
@@ -302,6 +304,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(IsFileListInput));
         OnPropertyChanged(nameof(IsInputDirectoryInput));
     }
+
+    private static BatchSettings CreateNewSettings() => new() { SaveAfterRun = false };
 
     private void OpenArtifact(string? path, string description)
     {

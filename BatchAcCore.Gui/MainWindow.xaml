@@ -40,15 +40,15 @@
                         <DockPanel Grid.Row="2" Grid.Column="1" Margin="0,3" IsEnabled="{Binding IsFileListInput}"><Button DockPanel.Dock="Right" Content="Browse..." Click="BrowseDrawingList_Click" Margin="8,0,0,0" /><TextBox Text="{Binding Settings.FileListPath, UpdateSourceTrigger=PropertyChanged}" /></DockPanel>
                         <RadioButton Grid.Row="3" Content="Input directory" GroupName="InputMethod" IsChecked="{Binding IsInputDirectoryInput, Mode=TwoWay}" VerticalAlignment="Center" Margin="0,6" />
                         <DockPanel Grid.Row="3" Grid.Column="1" Margin="0,3" IsEnabled="{Binding IsInputDirectoryInput}"><Button DockPanel.Dock="Right" Content="Browse..." Click="BrowseInputDirectory_Click" Margin="8,0,0,0" /><TextBox Text="{Binding Settings.InputDirectory, UpdateSourceTrigger=PropertyChanged}" /></DockPanel>
-                        <TextBlock Grid.Row="4" Text="Work directory" VerticalAlignment="Center" Margin="0,6" />
-                        <DockPanel Grid.Row="4" Grid.Column="1" Margin="0,3"><Button DockPanel.Dock="Right" Content="Browse..." Click="BrowseWorkDirectory_Click" Margin="8,0,0,0" /><TextBox Text="{Binding Settings.WorkDirectory, UpdateSourceTrigger=PropertyChanged}" /></DockPanel>
-                        <TextBlock Grid.Row="5" Text="Combined CSV directory" VerticalAlignment="Center" Margin="0,6" />
-                        <DockPanel Grid.Row="5" Grid.Column="1" Margin="0,3"><Button DockPanel.Dock="Right" Content="Browse..." Click="BrowseCombinedDirectory_Click" Margin="8,0,0,0" /><TextBox Text="{Binding Settings.CombinedCsvOutputDirectory, UpdateSourceTrigger=PropertyChanged}" /></DockPanel>
-                        <TextBlock Grid.Row="6" Text="Workers" VerticalAlignment="Center" Margin="0,6" />
-                        <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding Settings.WorkerCount, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" Width="100" HorizontalAlignment="Left" />
-                        <TextBlock Grid.Row="7" Text="Timeout (minutes)" VerticalAlignment="Center" Margin="0,6" />
-                        <TextBox Grid.Row="7" Grid.Column="1" Text="{Binding Settings.TimeoutMinutes, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" Width="100" HorizontalAlignment="Left" />
-                        <CheckBox Grid.Row="8" Grid.Column="1" Content="Search input directory recursively" IsChecked="{Binding Settings.Recursive}" Margin="0,6" />
+                        <CheckBox Grid.Row="4" Grid.Column="1" Content="Search this input directory recursively" IsChecked="{Binding Settings.Recursive}" IsEnabled="{Binding IsInputDirectoryInput}" Margin="0,6" />
+                        <TextBlock Grid.Row="5" Text="Work directory" VerticalAlignment="Center" Margin="0,6" />
+                        <DockPanel Grid.Row="5" Grid.Column="1" Margin="0,3"><Button DockPanel.Dock="Right" Content="Browse..." Click="BrowseWorkDirectory_Click" Margin="8,0,0,0" /><TextBox Text="{Binding Settings.WorkDirectory, UpdateSourceTrigger=PropertyChanged}" /></DockPanel>
+                        <TextBlock Grid.Row="6" Text="Combined CSV directory" VerticalAlignment="Center" Margin="0,6" />
+                        <DockPanel Grid.Row="6" Grid.Column="1" Margin="0,3"><Button DockPanel.Dock="Right" Content="Browse..." Click="BrowseCombinedDirectory_Click" Margin="8,0,0,0" /><TextBox Text="{Binding Settings.CombinedCsvOutputDirectory, UpdateSourceTrigger=PropertyChanged}" /></DockPanel>
+                        <TextBlock Grid.Row="7" Text="Workers" VerticalAlignment="Center" Margin="0,6" />
+                        <TextBox Grid.Row="7" Grid.Column="1" Text="{Binding Settings.WorkerCount, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" Width="100" HorizontalAlignment="Left" />
+                        <TextBlock Grid.Row="8" Text="Timeout (minutes)" VerticalAlignment="Center" Margin="0,6" />
+                        <TextBox Grid.Row="8" Grid.Column="1" Text="{Binding Settings.TimeoutMinutes, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" Width="100" HorizontalAlignment="Left" />
                         <CheckBox Grid.Row="9" Grid.Column="1" Content="Skip invalid drawing-list entries" IsChecked="{Binding Settings.SkipInvalidFileListEntries}" Margin="0,6" />
                         <CheckBox Grid.Row="10" Grid.Column="1" Content="Save drawings after successful processing" IsChecked="{Binding Settings.SaveAfterRun}" Margin="0,6" />
                         <CheckBox Grid.Row="11" Grid.Column="1" Content="Keep generated scripts" IsChecked="{Binding Settings.KeepScripts}" Margin="0,6" />
