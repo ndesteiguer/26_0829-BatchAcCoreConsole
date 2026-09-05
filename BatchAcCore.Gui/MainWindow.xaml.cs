@@ -81,6 +81,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         private set => SetField(ref _runSummary, value);
     }
 
+    private void NewProfile_Click(object sender, RoutedEventArgs e)
+    {
+        Settings = new BatchSettings();
+        _profilePath = null;
+        ClearRunState();
+        RunSummary = "New profile. Enter the required paths, then run preflight.";
+    }
+
     private void OpenProfile_Click(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog { Filter = "Batch profiles (*.json)|*.json|All files (*.*)|*.*" };
