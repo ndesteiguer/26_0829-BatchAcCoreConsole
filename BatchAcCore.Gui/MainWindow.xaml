@@ -87,7 +87,7 @@
             <TabItem Header="Run output">
                 <DockPanel Margin="8">
                     <TextBlock DockPanel.Dock="Top" Text="{Binding RunSummary}" FontWeight="SemiBold" Margin="0,0,0,8" />
-                    <TextBox Text="{Binding OutputText}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" />
+                    <TextBox Text="{Binding OutputText, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" />
                 </DockPanel>
             </TabItem>
         </TabControl>
