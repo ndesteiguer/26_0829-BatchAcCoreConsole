@@ -15,11 +15,23 @@ Windows command-line runner for applying an AutoLISP routine to many DWG files i
 
 The runner validates `AcCoreConsolePath`, `LispFilePath`, and `FileListPath` (when used) as existing files before any drawing is processed. It also verifies that `LispFilePath` contains a standard `defun` for `LispFunction` with exactly one argument (local variables after `/` are ignored). Blank and comment rows in `FileListPath` are always ignored. By default, every other entry must point to an existing `.dwg` file and invalid entries are reported before processing starts. Set `SkipInvalidFileListEntries` to `true` to silently skip invalid entries instead. It creates `WorkDirectory` and `CombinedCsvOutputDirectory` when needed.
 
-For deployment, publish a single executable:
+For framework-dependent Windows deployment, publish a 64-bit application folder:
 
 ```powershell
-dotnet publish -c Release -r win-x64 --self-contained true
+dotnet publish -c Release -r win-x64 --self-contained false
 ```
+
+The target workstation needs the matching x64 .NET Runtime. AutoCAD/Core Console remains a separate prerequisite.
+
+## Planned Windows GUI
+
+The current application is the supported command-line runner. A planned WPF GUI will provide profile editing, preflight diagnostics, queue monitoring, result review, and failed-only reruns for the same AcCoreConsole-compatible AutoLISP workflow. The GUI will be framework-dependent; users need the matching x64 .NET Desktop Runtime installed. It will not bundle or install .NET, AutoCAD, or Core Console, and it will preserve the CLI and JSON profile compatibility.
+
+The agreed product, functional, and architectural scope is recorded in:
+
+- [GUI project outline](GUI_PROJECT_OUTLINE.md)
+- [GUI functional specification](GUI_FUNCTIONAL_SPEC.md)
+- [GUI architecture plan](GUI_ARCHITECTURE_PLAN.md)
 
 ## What each worker does
 
