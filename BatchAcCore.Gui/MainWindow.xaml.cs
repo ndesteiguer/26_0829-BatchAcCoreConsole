@@ -32,7 +32,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public BatchSettings Settings
     {
         get => _settings;
-        private set => SetField(ref _settings, value);
+        private set
+        {
+            if (!SetField(ref _settings, value)) return;
+            OnPropertyChanged(nameof(IsFileListInput));
+            OnPropertyChanged(nameof(IsInputDirectoryInput));
+        }
     }
 
     public ObservableCollection<PreflightDiagnostic> Diagnostics { get; } = [];
@@ -58,6 +63,27 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public bool CanOpenSelectedLog => CanEdit && File.Exists(SelectedQueueItem?.LogPath);
     public bool CanOpenBatchSummary => CanEdit && File.Exists(_lastRun?.ReadableSummaryPath);
     public bool CanOpenCombinedCsv => CanEdit && File.Exists(_lastRun?.CombinedCsvPath);
+    public bool IsFileListInput
+    {
+        get => !string.IsNullOrWhiteSpace(Settings.FileListPath) || string.IsNullOrWhiteSpace(Settings.InputDirectory);
+        set
+        {
+            if (!value) return;
+            Settings.InputDirectory = null;
+            NotifyInputMethodChanged();
+        }
+    }
+
+    public bool IsInputDirectoryInput
+    {
+        get => !IsFileListInput;
+        set
+        {
+            if (!value) return;
+            Settings.FileListPath = null;
+            NotifyInputMethodChanged();
+        }
+    }
 
     public QueueItem? SelectedQueueItem
     {
@@ -268,6 +294,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (dialog.ShowDialog(this) != true) return;
         setPath(dialog.FolderName);
         OnPropertyChanged(nameof(Settings));
+    }
+
+    private void NotifyInputMethodChanged()
+    {
+        OnPropertyChanged(nameof(Settings));
+        OnPropertyChanged(nameof(IsFileListInput));
+        OnPropertyChanged(nameof(IsInputDirectoryInput));
     }
 
     private void OpenArtifact(string? path, string description)
