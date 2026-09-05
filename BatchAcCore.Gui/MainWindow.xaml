@@ -1,0 +1,84 @@
+<Window x:Class="BatchAcCore.Gui.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Batch AcCoreConsole" Height="840" Width="1180" MinHeight="650" MinWidth="900">
+    <DockPanel Margin="16">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,12">
+            <Button Content="Open profile" Click="OpenProfile_Click" Padding="12,5" Margin="0,0,8,0" />
+            <Button Content="Save profile" Click="SaveProfile_Click" Padding="12,5" Margin="0,0,8,0" />
+            <Button Content="Save profile as..." Click="SaveProfileAs_Click" Padding="12,5" Margin="0,0,24,0" />
+            <Button Content="Run preflight" Click="RunPreflight_Click" Padding="12,5" Margin="0,0,8,0" IsEnabled="{Binding CanEdit}" />
+            <Button Content="Start batch" Click="StartBatch_Click" Padding="12,5" Margin="0,0,8,0" IsEnabled="{Binding CanStart}" />
+            <Button Content="Cancel queued work" Click="Cancel_Click" Padding="12,5" IsEnabled="{Binding IsRunning}" />
+        </StackPanel>
+
+        <TabControl>
+            <TabItem Header="Profile">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <Grid Margin="8" IsEnabled="{Binding CanEdit}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="220" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Grid.Row="0" Text="Core Console executable" VerticalAlignment="Center" Margin="0,6" />
+                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Settings.AcCoreConsolePath, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
+                        <TextBlock Grid.Row="1" Text="AutoLISP routine (.lsp)" VerticalAlignment="Center" Margin="0,6" />
+                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Settings.LispFilePath, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
+                        <TextBlock Grid.Row="2" Text="Drawing list file" VerticalAlignment="Center" Margin="0,6" />
+                        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Settings.FileListPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
+                        <TextBlock Grid.Row="3" Text="or input directory" VerticalAlignment="Center" Margin="0,6" />
+                        <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Settings.InputDirectory, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
+                        <TextBlock Grid.Row="4" Text="Work directory" VerticalAlignment="Center" Margin="0,6" />
+                        <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding Settings.WorkDirectory, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
+                        <TextBlock Grid.Row="5" Text="Combined CSV directory" VerticalAlignment="Center" Margin="0,6" />
+                        <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding Settings.CombinedCsvOutputDirectory, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
+                        <TextBlock Grid.Row="6" Text="Workers" VerticalAlignment="Center" Margin="0,6" />
+                        <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding Settings.WorkerCount, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" Width="100" HorizontalAlignment="Left" />
+                        <TextBlock Grid.Row="7" Text="Timeout (minutes)" VerticalAlignment="Center" Margin="0,6" />
+                        <TextBox Grid.Row="7" Grid.Column="1" Text="{Binding Settings.TimeoutMinutes, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" Width="100" HorizontalAlignment="Left" />
+                        <CheckBox Grid.Row="8" Grid.Column="1" Content="Search input directory recursively" IsChecked="{Binding Settings.Recursive}" Margin="0,6" />
+                        <CheckBox Grid.Row="9" Grid.Column="1" Content="Skip invalid drawing-list entries" IsChecked="{Binding Settings.SkipInvalidFileListEntries}" Margin="0,6" />
+                        <CheckBox Grid.Row="10" Grid.Column="1" Content="Save drawings after successful processing" IsChecked="{Binding Settings.SaveAfterRun}" Margin="0,6" />
+                        <CheckBox Grid.Row="11" Grid.Column="1" Content="Keep generated scripts" IsChecked="{Binding Settings.KeepScripts}" Margin="0,6" />
+                    </Grid>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Preflight and queue">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions><RowDefinition Height="2*" /><RowDefinition Height="3*" /></Grid.RowDefinitions>
+                    <DataGrid ItemsSource="{Binding Diagnostics}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" Margin="0,0,0,8">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Result" Binding="{Binding Severity}" Width="100" />
+                            <DataGridTextColumn Header="Check" Binding="{Binding Check}" Width="180" />
+                            <DataGridTextColumn Header="Details" Binding="{Binding Message}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding Queue}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Drawing" Binding="{Binding Name}" Width="220" />
+                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="110" />
+                            <DataGridTextColumn Header="Worker" Binding="{Binding WorkerId}" Width="70" />
+                            <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="280" />
+                            <DataGridTextColumn Header="Full path" Binding="{Binding Drawing}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Run output">
+                <DockPanel Margin="8">
+                    <TextBlock DockPanel.Dock="Top" Text="{Binding RunSummary}" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <TextBox Text="{Binding OutputText}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" />
+                </DockPanel>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>
