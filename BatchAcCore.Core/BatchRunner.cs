@@ -12,6 +12,24 @@ public interface IBatchOutput
     void WriteError(string message);
 }
 
+public enum BatchEventKind
+{
+    BatchStarted,
+    JobQueued,
+    JobStarted,
+    JobCompleted,
+    Warning,
+    BatchCompleted
+}
+
+public sealed record BatchProgressEvent(
+    BatchEventKind Kind,
+    DateTimeOffset OccurredUtc,
+    string? Drawing = null,
+    int? WorkerId = null,
+    string? Status = null,
+    string? Message = null);
+
 public static class BatchRunner
 {
     private const string LispLoadFailure = "Lisp routine failed to load.";
@@ -22,7 +40,11 @@ public static class BatchRunner
         WriteIndented = true
     };
 
-    public static async Task<int> RunAsync(string[] args, IBatchOutput output)
+    public static async Task<int> RunAsync(
+        string[] args,
+        IBatchOutput output,
+        IProgress<BatchProgressEvent>? progress = null,
+        CancellationToken cancellationToken = default)
     {
         if (args.Length != 1 || args[0] is "--help" or "-h")
         {
@@ -68,52 +90,63 @@ public static class BatchRunner
         var csvFilesBeforeBatch = SnapshotCsvFiles(settings.WorkDirectory!);
         output.WriteLine($"Queued {drawings.Length} drawing(s), using {settings.WorkerCount} worker(s).");
         output.WriteLine($"Work directory: {settings.WorkDirectory}");
+        Report(progress, BatchEventKind.BatchStarted, message: $"Queued {drawings.Length} drawing(s).");
+        foreach (var drawing in drawings)
+            Report(progress, BatchEventKind.JobQueued, drawing: drawing, status: "Queued");
 
         var results = new ConcurrentBag<JobResult>();
-        using var semaphore = new SemaphoreSlim(settings.WorkerCount);
-        var workerSlots = new ConcurrentBag<int>(Enumerable.Range(1, settings.WorkerCount));
+        var pendingDrawings = new ConcurrentQueue<string>(drawings);
         var lispLoadFailureDetected = 0;
-        var jobs = drawings.Select(async drawing =>
+        var workers = Enumerable.Range(1, settings.WorkerCount).Select(async workerId =>
         {
-            await semaphore.WaitAsync();
-            try
+            while (pendingDrawings.TryDequeue(out var drawing))
             {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    var cancelledAt = DateTimeOffset.UtcNow;
+                    const string reason = "Cancelled before processing started.";
+                    results.Add(new(drawing, "Cancelled", null, cancelledAt, cancelledAt, null, reason));
+                    Report(progress, BatchEventKind.JobCompleted, drawing, workerId, "Cancelled", reason);
+                    break;
+                }
+
                 if (Volatile.Read(ref lispLoadFailureDetected) != 0)
                 {
                     var skippedAt = DateTimeOffset.UtcNow;
                     const string reason = "Skipped because the LISP routine failed to load in another worker.";
                     results.Add(new(drawing, "Skipped", null, skippedAt, skippedAt, null, reason));
                     output.WriteLine($"SKIPPED {Path.GetFileName(drawing)} ({reason})");
-                    return;
+                    Report(progress, BatchEventKind.JobCompleted, drawing, workerId, "Skipped", reason);
+                    continue;
                 }
 
-                if (!workerSlots.TryTake(out var workerId))
-                    throw new InvalidOperationException("A worker slot was unavailable.");
-                try
-                {
-                    var result = await RunJobAsync(settings, drawing, isolateRoot, workerId, output);
-                    if (string.Equals(result.Error, LispLoadFailure, StringComparison.Ordinal))
-                        Interlocked.Exchange(ref lispLoadFailureDetected, 1);
-                    results.Add(result);
-                }
-                finally
-                {
-                    workerSlots.Add(workerId);
-                }
-            }
-            finally
-            {
-                semaphore.Release();
+                Report(progress, BatchEventKind.JobStarted, drawing, workerId, "Running");
+                var result = await RunJobAsync(settings, drawing, isolateRoot, workerId, output);
+                if (string.Equals(result.Error, LispLoadFailure, StringComparison.Ordinal))
+                    Interlocked.Exchange(ref lispLoadFailureDetected, 1);
+                results.Add(result);
+                Report(progress, BatchEventKind.JobCompleted, drawing, workerId, result.Status, result.Error);
             }
         });
-        await Task.WhenAll(jobs);
+        await Task.WhenAll(workers);
+        while (pendingDrawings.TryDequeue(out var drawing))
+        {
+            var cancelledAt = DateTimeOffset.UtcNow;
+            const string reason = "Cancelled before processing started.";
+            results.Add(new(drawing, "Cancelled", null, cancelledAt, cancelledAt, null, reason));
+            Report(progress, BatchEventKind.JobCompleted, drawing, status: "Cancelled", message: reason);
+        }
         if (!TryDeleteDirectory(isolateRoot))
+        {
             output.WriteError($"Could not remove temporary Core Console profile data: {isolateRoot}");
+            Report(progress, BatchEventKind.Warning, message: $"Could not remove temporary Core Console profile data: {isolateRoot}");
+        }
 
         var ordered = results.OrderBy(r => r.Drawing, StringComparer.OrdinalIgnoreCase).ToArray();
         var succeeded = ordered.Count(result => result.Status == "Succeeded");
         var skipped = ordered.Count(result => result.Status == "Skipped");
-        var failed = ordered.Length - succeeded - skipped;
+        var cancelled = ordered.Count(result => result.Status == "Cancelled");
+        var failed = ordered.Length - succeeded - skipped - cancelled;
         var elapsedRuntime = ordered.Max(result => result.FinishedUtc) - ordered.Min(result => result.StartedUtc);
         string? combinedCsvPath = null;
         string? combinationError = null;
@@ -157,7 +190,7 @@ public static class BatchRunner
         try
         {
             Directory.CreateDirectory(settings.CombinedCsvOutputDirectory!);
-            await File.WriteAllTextAsync(readableSummaryPath, BuildReadableSummary(settings, ordered, succeeded, failed, skipped, elapsedRuntime, combinedCsvPath, issues, summaryPath));
+            await File.WriteAllTextAsync(readableSummaryPath, BuildReadableSummary(settings, ordered, succeeded, failed, skipped, cancelled, elapsedRuntime, combinedCsvPath, issues, summaryPath));
             output.WriteLine($"Batch summary: {readableSummaryPath}");
         }
         catch (Exception exception)
@@ -165,7 +198,11 @@ public static class BatchRunner
             combinationError = combinationError is null ? exception.Message : $"{combinationError}{Environment.NewLine}{exception.Message}";
             output.WriteError($"Could not write batch summary: {exception.Message}");
         }
-        output.WriteLine($"Finished: {succeeded} succeeded, {failed} failed, {skipped} skipped. Summary: {summaryPath}");
+        var completionMessage = cancelled == 0
+            ? $"Finished: {succeeded} succeeded, {failed} failed, {skipped} skipped. Summary: {summaryPath}"
+            : $"Finished: {succeeded} succeeded, {failed} failed, {skipped} skipped, {cancelled} cancelled. Summary: {summaryPath}";
+        output.WriteLine(completionMessage);
+        Report(progress, BatchEventKind.BatchCompleted, status: cancelled > 0 ? "Cancelled" : "Completed", message: $"{succeeded} succeeded, {failed} failed, {skipped} skipped, {cancelled} cancelled.");
         return succeeded == ordered.Length && combinationError is null ? 0 : 1;
     }
 
@@ -413,6 +450,7 @@ public static class BatchRunner
         int succeeded,
         int failed,
         int skipped,
+        int cancelled,
         TimeSpan elapsedRuntime,
         string? combinedCsvPath,
         IReadOnlyList<string> issues,
@@ -423,7 +461,9 @@ public static class BatchRunner
         summary.AppendLine(new string('=', 26));
         summary.AppendLine($"Completed (UTC): {DateTimeOffset.UtcNow:O}");
         summary.AppendLine($"Elapsed runtime (approx.): {FormatElapsedRuntime(elapsedRuntime)}");
-        summary.AppendLine($"Results: {succeeded} succeeded, {failed} failed, {skipped} skipped");
+        summary.AppendLine(cancelled == 0
+            ? $"Results: {succeeded} succeeded, {failed} failed, {skipped} skipped"
+            : $"Results: {succeeded} succeeded, {failed} failed, {skipped} skipped, {cancelled} cancelled");
         summary.AppendLine($"Structured summary: {jsonSummaryPath}");
         summary.AppendLine($"Combined CSV: {combinedCsvPath ?? "Not created"}");
 
@@ -486,10 +526,19 @@ public static class BatchRunner
 
     private static string FormatElapsedRuntime(TimeSpan elapsedRuntime) => $"{(int)elapsedRuntime.TotalHours:D2}:{elapsedRuntime.Minutes:D2}:{elapsedRuntime.Seconds:D2}";
 
+    private static void Report(
+        IProgress<BatchProgressEvent>? progress,
+        BatchEventKind kind,
+        string? drawing = null,
+        int? workerId = null,
+        string? status = null,
+        string? message = null) =>
+        progress?.Report(new BatchProgressEvent(kind, DateTimeOffset.UtcNow, drawing, workerId, status, message));
+
     private static int Fail(IBatchOutput output, string message) { output.WriteError($"Error: {message}"); return 2; }
 }
 
-internal sealed class BatchSettings
+public sealed class BatchSettings
 {
     public string? AcCoreConsolePath { get; set; }
     public string? LispFilePath { get; set; }
@@ -557,5 +606,5 @@ internal sealed class BatchSettings
     private static string Resolve(string value, string baseDirectory) => Path.GetFullPath(Path.IsPathFullyQualified(value) ? value : Path.Combine(baseDirectory, value));
 }
 
-internal sealed record JobResult(string Drawing, string Status, int? ExitCode, DateTimeOffset StartedUtc, DateTimeOffset FinishedUtc, string? LogPath, string? Error);
+public sealed record JobResult(string Drawing, string Status, int? ExitCode, DateTimeOffset StartedUtc, DateTimeOffset FinishedUtc, string? LogPath, string? Error);
 internal readonly record struct CsvFileStamp(long Length, DateTime LastWriteUtc);
