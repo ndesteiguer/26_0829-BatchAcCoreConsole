@@ -108,6 +108,7 @@ internal static class BatchRunner
         var succeeded = ordered.Count(result => result.Status == "Succeeded");
         var skipped = ordered.Count(result => result.Status == "Skipped");
         var failed = ordered.Length - succeeded - skipped;
+        var elapsedRuntime = ordered.Max(result => result.FinishedUtc) - ordered.Min(result => result.StartedUtc);
         string? combinedCsvPath = null;
         string? combinationError = null;
         var issues = new List<string>();
@@ -150,7 +151,7 @@ internal static class BatchRunner
         try
         {
             Directory.CreateDirectory(settings.CombinedCsvOutputDirectory!);
-            await File.WriteAllTextAsync(readableSummaryPath, BuildReadableSummary(settings, ordered, succeeded, failed, skipped, combinedCsvPath, issues, summaryPath));
+            await File.WriteAllTextAsync(readableSummaryPath, BuildReadableSummary(settings, ordered, succeeded, failed, skipped, elapsedRuntime, combinedCsvPath, issues, summaryPath));
             Console.WriteLine($"Batch summary: {readableSummaryPath}");
         }
         catch (Exception exception)
@@ -406,6 +407,7 @@ internal static class BatchRunner
         int succeeded,
         int failed,
         int skipped,
+        TimeSpan elapsedRuntime,
         string? combinedCsvPath,
         IReadOnlyList<string> issues,
         string jsonSummaryPath)
@@ -414,6 +416,7 @@ internal static class BatchRunner
         summary.AppendLine("Batch AcCoreConsole summary");
         summary.AppendLine(new string('=', 26));
         summary.AppendLine($"Completed (UTC): {DateTimeOffset.UtcNow:O}");
+        summary.AppendLine($"Elapsed runtime (approx.): {FormatElapsedRuntime(elapsedRuntime)}");
         summary.AppendLine($"Results: {succeeded} succeeded, {failed} failed, {skipped} skipped");
         summary.AppendLine($"Structured summary: {jsonSummaryPath}");
         summary.AppendLine($"Combined CSV: {combinedCsvPath ?? "Not created"}");
@@ -474,6 +477,8 @@ internal static class BatchRunner
     }
 
     private static string FormatLogPath(string? logPath) => logPath is null ? string.Empty : $" (log: {logPath})";
+
+    private static string FormatElapsedRuntime(TimeSpan elapsedRuntime) => $"{(int)elapsedRuntime.TotalHours:D2}:{elapsedRuntime.Minutes:D2}:{elapsedRuntime.Seconds:D2}";
 
     private static int Fail(string message) { Console.Error.WriteLine($"Error: {message}"); return 2; }
 }
