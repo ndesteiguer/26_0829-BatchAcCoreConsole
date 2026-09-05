@@ -62,16 +62,16 @@ The total succeeded, failed, running, and queued count updates as jobs end. Gene
 
 After a completed run, the user can create a new queue containing only failed or cancelled drawings. The source profile remains unchanged. The run record retains a snapshot of the actual normalized settings used.
 
-## 3. Cancellation policy (decision required before implementation)
+## 3. Cancellation policy
 
-Cancelling a batch must not be presented as a guaranteed rollback. The proposed policy is:
+Cancelling a batch stops scheduling queued jobs immediately and allows every already-started Core Console job to finish normally. The application does not force-terminate Core Console processes as part of ordinary cancellation.
 
-1. Stop scheduling queued jobs immediately.
-2. Offer either *finish active jobs* or *terminate active jobs*.
-3. If termination is selected, kill only Core Console processes launched by this batch.
-4. Mark terminated jobs as `cancelled`; mark jobs whose drawing-save state cannot be determined as `unknown`.
-5. Preserve logs, scripts when available, and a summary containing the cancellation mode/time.
-6. When `SaveAfterRun` is enabled, show an acknowledgement before both starting and force-terminating a batch.
+This policy preserves the runner's normal per-drawing completion, logging, and save behavior and avoids representing a forcibly interrupted DWG as a known safe or known failed state. A cancelled batch therefore has two result groups:
+
+1. Jobs that had already started, which retain their normal succeeded or failed result after completion.
+2. Jobs that had not started, which are marked `cancelled` and are eligible for a later rerun.
+
+The summary records the cancellation time and preserves logs and scripts when available. If an active job exceeds its configured timeout, the existing timeout handling determines its result; cancellation does not alter that behavior.
 
 ## 4. Error reporting
 
