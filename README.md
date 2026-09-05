@@ -15,7 +15,7 @@ Windows command-line runner for applying an AutoLISP routine to many DWG files i
 
 The runner validates `AcCoreConsolePath`, `LispFilePath`, and `FileListPath` (when used) as existing files before any drawing is processed. `LispFilePath` must point to a `.lsp` file whose filename (without `.lsp`) is the function to run. The runner verifies that the file contains a standard `defun` for that function with exactly one argument (local variables after `/` are ignored). Blank and comment rows in `FileListPath` are always ignored. By default, every other entry must point to an existing `.dwg` file and invalid entries are reported before processing starts. Set `SkipInvalidFileListEntries` to `true` to silently skip invalid entries instead. It creates `WorkDirectory` and `CombinedCsvOutputDirectory` when needed.
 
-For framework-dependent Windows deployment, publish a 64-bit application folder:
+For framework-dependent Windows deployment, publish a 64-bit CLI application folder:
 
 ```powershell
 dotnet publish -c Release -r win-x64 --self-contained false
@@ -23,9 +23,25 @@ dotnet publish -c Release -r win-x64 --self-contained false
 
 The target workstation needs the matching x64 .NET Runtime. AutoCAD/Core Console remains a separate prerequisite.
 
-## Planned Windows GUI
+## Windows GUI
 
-The current application is the supported command-line runner. A planned WPF GUI will provide profile editing, preflight diagnostics, queue monitoring, result review, and failed-only reruns for the same AcCoreConsole-compatible AutoLISP workflow. The GUI will be framework-dependent; users need the matching x64 .NET Desktop Runtime installed. It will not bundle or install .NET, AutoCAD, or Core Console, and it will preserve the CLI and JSON profile compatibility.
+The WPF GUI is the desktop workflow for the same runner. It supports profile editing and saving, explicit preflight, resolved-queue review, live job status, cancellation of queued work, result/log review, and creation of a separate failed-only rerun profile.
+
+Run it from a development checkout:
+
+```powershell
+dotnet run --project .\BatchAcCore.Gui\BatchAcCore.Gui.csproj
+```
+
+For deployment, publish a framework-dependent x64 application folder:
+
+```powershell
+dotnet publish .\BatchAcCore.Gui\BatchAcCore.Gui.csproj -c Release -r win-x64 --self-contained false
+```
+
+The workstation needs the matching x64 **.NET Desktop Runtime**, plus a separately installed/licensed AutoCAD Core Console. The GUI does not bundle or install .NET, AutoCAD, or Core Console; it uses user-chosen paths and JSON profile files, requires no administrator permission, and does not modify AutoCAD profiles or security settings. UNC paths remain supported through editable path fields.
+
+Preflight is non-running: it validates the profile and resolves the drawing queue before the batch starts. If cancellation is requested during a batch, the GUI stops starting queued jobs but lets already-running Core Console jobs finish normally. A failed-only rerun writes a new profile and companion drawing list, leaving the source profile untouched.
 
 The agreed product, functional, and architectural scope is recorded in:
 

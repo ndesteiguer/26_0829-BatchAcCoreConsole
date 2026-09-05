@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -20,6 +21,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _runSummary = "Open or create a profile, then run preflight before starting a batch.";
     private CancellationTokenSource? _cancellation;
     private BatchRunResult? _lastRun;
+    private QueueItem? _selectedQueueItem;
 
     public MainWindow()
     {
@@ -44,12 +46,28 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (!SetField(ref _isRunning, value)) return;
             OnPropertyChanged(nameof(CanEdit));
             OnPropertyChanged(nameof(CanStart));
+            OnPropertyChanged(nameof(CanOpenSelectedLog));
+            OnPropertyChanged(nameof(CanOpenBatchSummary));
+            OnPropertyChanged(nameof(CanOpenCombinedCsv));
         }
     }
 
     public bool CanEdit => !IsRunning;
     public bool CanStart => CanEdit && _canRun;
     public bool CanCreateRerun => CanEdit && _lastRun is not null && _lastRun.Jobs.Any(job => job.Status is "Failed" or "TimedOut" or "Cancelled");
+    public bool CanOpenSelectedLog => CanEdit && File.Exists(SelectedQueueItem?.LogPath);
+    public bool CanOpenBatchSummary => CanEdit && File.Exists(_lastRun?.ReadableSummaryPath);
+    public bool CanOpenCombinedCsv => CanEdit && File.Exists(_lastRun?.CombinedCsvPath);
+
+    public QueueItem? SelectedQueueItem
+    {
+        get => _selectedQueueItem;
+        set
+        {
+            if (!SetField(ref _selectedQueueItem, value)) return;
+            OnPropertyChanged(nameof(CanOpenSelectedLog));
+        }
+    }
 
     public string OutputText
     {
@@ -113,6 +131,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void BrowseCombinedDirectory_Click(object sender, RoutedEventArgs e) =>
         ChooseFolder(path => Settings.CombinedCsvOutputDirectory = path);
+
+    private void OpenSelectedLog_Click(object sender, RoutedEventArgs e) => OpenArtifact(SelectedQueueItem?.LogPath, "job log");
+    private void OpenBatchSummary_Click(object sender, RoutedEventArgs e) => OpenArtifact(_lastRun?.ReadableSummaryPath, "batch summary");
+    private void OpenCombinedCsv_Click(object sender, RoutedEventArgs e) => OpenArtifact(_lastRun?.CombinedCsvPath, "combined CSV");
 
     private void CreateRerun_Click(object sender, RoutedEventArgs e)
     {
@@ -178,6 +200,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             _lastRun = await BatchRunner.RunWithResultAsync([_profilePath!], output, progress, _cancellation.Token);
             OnPropertyChanged(nameof(CanCreateRerun));
+            OnPropertyChanged(nameof(CanOpenBatchSummary));
+            OnPropertyChanged(nameof(CanOpenCombinedCsv));
             RunSummary = "Batch completed with exit code " + _lastRun.ExitCode + ". " + BuildQueueSummary();
         }
         catch (Exception exception)
@@ -203,6 +227,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         _lastRun = null;
         OnPropertyChanged(nameof(CanCreateRerun));
+        OnPropertyChanged(nameof(CanOpenBatchSummary));
+        OnPropertyChanged(nameof(CanOpenCombinedCsv));
         var baseDirectory = _profilePath is null ? Environment.CurrentDirectory : Path.GetDirectoryName(_profilePath)!;
         var report = BatchPreflight.Check(Settings, baseDirectory);
         Diagnostics.Clear();
@@ -233,6 +259,24 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (dialog.ShowDialog(this) != true) return;
         setPath(dialog.FolderName);
         OnPropertyChanged(nameof(Settings));
+    }
+
+    private void OpenArtifact(string? path, string description)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            MessageBox.Show(this, "The " + description + " is not available at the recorded path.", Title, MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(this, "Could not open the " + description + ".\n\n" + exception.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     private bool EnsureProfilePath()
@@ -270,6 +314,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 item.WorkerId = progress.WorkerId;
                 item.Message = progress.Message;
                 if (progress.Result is not null) item.ApplyResult(progress.Result);
+                OnPropertyChanged(nameof(CanOpenSelectedLog));
             }
         }
 
@@ -303,11 +348,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         _canRun = false;
         _lastRun = null;
+        SelectedQueueItem = null;
         Diagnostics.Clear();
         Queue.Clear();
         OutputText = string.Empty;
         OnPropertyChanged(nameof(CanStart));
         OnPropertyChanged(nameof(CanCreateRerun));
+        OnPropertyChanged(nameof(CanOpenSelectedLog));
+        OnPropertyChanged(nameof(CanOpenBatchSummary));
+        OnPropertyChanged(nameof(CanOpenCombinedCsv));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
