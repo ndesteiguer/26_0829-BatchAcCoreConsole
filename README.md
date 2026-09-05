@@ -33,7 +33,7 @@ The script disables dialogs, loads your `.lsp`, evaluates the function derived f
 
 Each batch creates a temporary root under the Windows temporary directory, for example `%TEMP%\BatchAcCoreConsole-<unique-batch-id>`. Each worker runs Core Console with its isolated profile in a `worker-<n>` subfolder, and the short-lived per-drawing completion markers and default transient scripts are written directly in the temporary root. The entire temporary root is removed after the batch finishes, even when `KeepScripts` is `true`, and remains outside `WorkDirectory` so its files do not mix with retained batch artifacts or ordinary folder synchronization.
 
-`summary.json` is retained in `WorkDirectory`. By default, a separate stdout/stderr `.log` is also retained for each drawing. Set `CreateLogFiles` to `false` in `settings.json` to discard that output after it is drained, avoiding per-drawing log files and their synchronization events. A batch-wide LISP load failure records queued drawings as `Skipped`. Exit code 1 means one or more drawings failed or were skipped; use `summary.json` to re-run just those files.
+Each batch writes a timestamped `summary-*.json` file in `WorkDirectory`. By default, a separate stdout/stderr `.log` is also retained for each drawing. Set `CreateLogFiles` to `false` in `settings.json` to discard that output after it is drained, avoiding per-drawing log files and their synchronization events. A batch-wide LISP load failure records queued drawings as `Skipped`. Exit code 1 means one or more drawings failed or were skipped; use the JSON summary to re-run just those files.
 
 ## Combined CSV output
 

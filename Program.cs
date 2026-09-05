@@ -145,7 +145,7 @@ internal static class BatchRunner
             }
         }
 
-        var summaryPath = Path.Combine(settings.WorkDirectory!, "summary.json");
+        var summaryPath = Path.Combine(settings.WorkDirectory!, $"summary-{DateTime.UtcNow:yyyyMMddHHmmssfff}.json");
         await File.WriteAllTextAsync(summaryPath, JsonSerializer.Serialize(ordered, JsonOptions));
         var readableSummaryPath = Path.Combine(settings.CombinedCsvOutputDirectory!, $"batch-summary-{DateTime.UtcNow:yyyyMMddHHmmssfff}.txt");
         try
