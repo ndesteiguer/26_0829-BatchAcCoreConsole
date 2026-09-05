@@ -150,7 +150,7 @@ internal static class BatchRunner
         try
         {
             Directory.CreateDirectory(settings.CombinedCsvOutputDirectory!);
-            await File.WriteAllTextAsync(readableSummaryPath, BuildReadableSummary(ordered, succeeded, failed, skipped, combinedCsvPath, issues, summaryPath));
+            await File.WriteAllTextAsync(readableSummaryPath, BuildReadableSummary(settings, ordered, succeeded, failed, skipped, combinedCsvPath, issues, summaryPath));
             Console.WriteLine($"Batch summary: {readableSummaryPath}");
         }
         catch (Exception exception)
@@ -401,6 +401,7 @@ internal static class BatchRunner
     }
 
     private static string BuildReadableSummary(
+        BatchSettings settings,
         IReadOnlyList<JobResult> results,
         int succeeded,
         int failed,
@@ -416,6 +417,23 @@ internal static class BatchRunner
         summary.AppendLine($"Results: {succeeded} succeeded, {failed} failed, {skipped} skipped");
         summary.AppendLine($"Structured summary: {jsonSummaryPath}");
         summary.AppendLine($"Combined CSV: {combinedCsvPath ?? "Not created"}");
+
+        summary.AppendLine();
+        summary.AppendLine("Effective settings:");
+        summary.AppendLine($"- AcCoreConsole path: {settings.AcCoreConsolePath}");
+        summary.AppendLine($"- LISP file path: {settings.LispFilePath}");
+        summary.AppendLine($"- LISP function: {settings.RoutineFunction} (derived from the filename)");
+        summary.AppendLine($"- File list path: {settings.FileListPath ?? "Not used"}");
+        summary.AppendLine($"- Skip invalid file-list entries: {settings.SkipInvalidFileListEntries}");
+        summary.AppendLine($"- Input directory: {settings.InputDirectory ?? "Not used"}");
+        summary.AppendLine($"- Recursive input scan: {settings.Recursive}");
+        summary.AppendLine($"- Workers: {settings.WorkerCount}");
+        summary.AppendLine($"- Timeout: {settings.TimeoutMinutes} minute(s)");
+        summary.AppendLine($"- Save drawings after processing: {settings.SaveAfterRun}");
+        summary.AppendLine($"- Keep generated scripts: {settings.KeepScripts}");
+        summary.AppendLine($"- Create per-drawing log files: {settings.CreateLogFiles}");
+        summary.AppendLine($"- Work directory: {settings.WorkDirectory}");
+        summary.AppendLine($"- Combined output directory: {settings.CombinedCsvOutputDirectory}");
 
         summary.AppendLine();
         summary.AppendLine($"Batch issues ({issues.Count}):");

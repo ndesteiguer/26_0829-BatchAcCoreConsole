@@ -37,7 +37,7 @@ Each batch creates a temporary root under the Windows temporary directory, for e
 
 ## Combined CSV output
 
-Set `CombinedCsvOutputDirectory` to the folder where completed-batch CSVs should be written. Every routine must write one CSV per drawing using `<drawing name without extension>.<function name>.csv`, where the function name is derived from `LispFilePath`. After the batch ends, the runner combines each expected CSV that was created or updated in `WorkDirectory` into a timestamped `combined-*.csv` containing one header row and every data row. It reports missing expected CSVs but still writes the combined output from those found. The combined CSV is not created when no expected CSV files are found or the source CSV headers differ. The directory also receives a timestamped `batch-summary-*.txt` file with every successful, failed, and skipped drawing plus batch-level issues.
+Set `CombinedCsvOutputDirectory` to the folder where completed-batch CSVs should be written. Every routine must write one CSV per drawing using `<drawing name without extension>.<function name>.csv`, where the function name is derived from `LispFilePath`. After the batch ends, the runner combines each expected CSV that was created or updated in `WorkDirectory` into a timestamped `combined-*.csv` containing one header row and every data row. It reports missing expected CSVs but still writes the combined output from those found. The combined CSV is not created when no expected CSV files are found or the source CSV headers differ. The directory also receives a timestamped `batch-summary-*.txt` file with every successful, failed, and skipped drawing, batch-level issues, and the effective settings used for the run.
 
 ## AutoLISP output directory
 
