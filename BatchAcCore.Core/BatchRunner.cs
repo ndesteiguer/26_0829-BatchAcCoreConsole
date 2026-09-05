@@ -28,7 +28,8 @@ public sealed record BatchProgressEvent(
     string? Drawing = null,
     int? WorkerId = null,
     string? Status = null,
-    string? Message = null);
+    string? Message = null,
+    JobResult? Result = null);
 
 public static class BatchRunner
 {
@@ -44,13 +45,20 @@ public static class BatchRunner
         string[] args,
         IBatchOutput output,
         IProgress<BatchProgressEvent>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        (await RunWithResultAsync(args, output, progress, cancellationToken)).ExitCode;
+
+    public static async Task<BatchRunResult> RunWithResultAsync(
+        string[] args,
+        IBatchOutput output,
+        IProgress<BatchProgressEvent>? progress = null,
         CancellationToken cancellationToken = default)
     {
         if (args.Length != 1 || args[0] is "--help" or "-h")
         {
             output.WriteLine("Usage: BatchAcCoreConsole <settings.json>");
             output.WriteLine("Copy settings.example.json, set the paths and run this command.");
-            return args.Length == 1 ? 0 : 2;
+            return new(args.Length == 1 ? 0 : 2, [], null, null, null, [], false);
         }
 
         var settingsFile = Path.GetFullPath(args[0]);
@@ -105,8 +113,9 @@ public static class BatchRunner
                 {
                     var cancelledAt = DateTimeOffset.UtcNow;
                     const string reason = "Cancelled before processing started.";
-                    results.Add(new(drawing, "Cancelled", null, cancelledAt, cancelledAt, null, reason));
-                    Report(progress, BatchEventKind.JobCompleted, drawing, workerId, "Cancelled", reason);
+                    var queuedCancellation = new JobResult(drawing, "Cancelled", null, cancelledAt, cancelledAt, null, reason);
+                    results.Add(queuedCancellation);
+                    Report(progress, BatchEventKind.JobCompleted, drawing, workerId, "Cancelled", reason, queuedCancellation);
                     break;
                 }
 
@@ -114,9 +123,10 @@ public static class BatchRunner
                 {
                     var skippedAt = DateTimeOffset.UtcNow;
                     const string reason = "Skipped because the LISP routine failed to load in another worker.";
-                    results.Add(new(drawing, "Skipped", null, skippedAt, skippedAt, null, reason));
+                    var skippedResult = new JobResult(drawing, "Skipped", null, skippedAt, skippedAt, null, reason);
+                    results.Add(skippedResult);
                     output.WriteLine($"SKIPPED {Path.GetFileName(drawing)} ({reason})");
-                    Report(progress, BatchEventKind.JobCompleted, drawing, workerId, "Skipped", reason);
+                    Report(progress, BatchEventKind.JobCompleted, drawing, workerId, "Skipped", reason, skippedResult);
                     continue;
                 }
 
@@ -125,7 +135,7 @@ public static class BatchRunner
                 if (string.Equals(result.Error, LispLoadFailure, StringComparison.Ordinal))
                     Interlocked.Exchange(ref lispLoadFailureDetected, 1);
                 results.Add(result);
-                Report(progress, BatchEventKind.JobCompleted, drawing, workerId, result.Status, result.Error);
+                Report(progress, BatchEventKind.JobCompleted, drawing, workerId, result.Status, result.Error, result);
             }
         });
         await Task.WhenAll(workers);
@@ -133,8 +143,9 @@ public static class BatchRunner
         {
             var cancelledAt = DateTimeOffset.UtcNow;
             const string reason = "Cancelled before processing started.";
-            results.Add(new(drawing, "Cancelled", null, cancelledAt, cancelledAt, null, reason));
-            Report(progress, BatchEventKind.JobCompleted, drawing, status: "Cancelled", message: reason);
+            var result = new JobResult(drawing, "Cancelled", null, cancelledAt, cancelledAt, null, reason);
+            results.Add(result);
+            Report(progress, BatchEventKind.JobCompleted, drawing, status: "Cancelled", message: reason, result: result);
         }
         if (!TryDeleteDirectory(isolateRoot))
         {
@@ -186,11 +197,13 @@ public static class BatchRunner
 
         var summaryPath = Path.Combine(settings.WorkDirectory!, $"summary-{DateTime.UtcNow:yyyyMMddHHmmssfff}.json");
         await File.WriteAllTextAsync(summaryPath, JsonSerializer.Serialize(ordered, JsonOptions));
-        var readableSummaryPath = Path.Combine(settings.CombinedCsvOutputDirectory!, $"batch-summary-{DateTime.UtcNow:yyyyMMddHHmmssfff}.txt");
+        var readableSummaryCandidate = Path.Combine(settings.CombinedCsvOutputDirectory!, $"batch-summary-{DateTime.UtcNow:yyyyMMddHHmmssfff}.txt");
+        string? readableSummaryPath = null;
         try
         {
             Directory.CreateDirectory(settings.CombinedCsvOutputDirectory!);
-            await File.WriteAllTextAsync(readableSummaryPath, BuildReadableSummary(settings, ordered, succeeded, failed, skipped, cancelled, elapsedRuntime, combinedCsvPath, issues, summaryPath));
+            await File.WriteAllTextAsync(readableSummaryCandidate, BuildReadableSummary(settings, ordered, succeeded, failed, skipped, cancelled, elapsedRuntime, combinedCsvPath, issues, summaryPath));
+            readableSummaryPath = readableSummaryCandidate;
             output.WriteLine($"Batch summary: {readableSummaryPath}");
         }
         catch (Exception exception)
@@ -203,7 +216,8 @@ public static class BatchRunner
             : $"Finished: {succeeded} succeeded, {failed} failed, {skipped} skipped, {cancelled} cancelled. Summary: {summaryPath}";
         output.WriteLine(completionMessage);
         Report(progress, BatchEventKind.BatchCompleted, status: cancelled > 0 ? "Cancelled" : "Completed", message: $"{succeeded} succeeded, {failed} failed, {skipped} skipped, {cancelled} cancelled.");
-        return succeeded == ordered.Length && combinationError is null ? 0 : 1;
+        var exitCode = succeeded == ordered.Length && combinationError is null ? 0 : 1;
+        return new(exitCode, ordered, summaryPath, readableSummaryPath, combinedCsvPath, issues, cancelled > 0);
     }
 
     private static async Task<JobResult> RunJobAsync(BatchSettings settings, string drawing, string isolateRoot, int workerId, IBatchOutput output)
@@ -532,10 +546,15 @@ public static class BatchRunner
         string? drawing = null,
         int? workerId = null,
         string? status = null,
-        string? message = null) =>
-        progress?.Report(new BatchProgressEvent(kind, DateTimeOffset.UtcNow, drawing, workerId, status, message));
+        string? message = null,
+        JobResult? result = null) =>
+        progress?.Report(new BatchProgressEvent(kind, DateTimeOffset.UtcNow, drawing, workerId, status, message, result));
 
-    private static int Fail(IBatchOutput output, string message) { output.WriteError($"Error: {message}"); return 2; }
+    private static BatchRunResult Fail(IBatchOutput output, string message)
+    {
+        output.WriteError($"Error: {message}");
+        return new(2, [], null, null, null, [message], false);
+    }
 }
 
 public sealed class BatchSettings
@@ -607,4 +626,12 @@ public sealed class BatchSettings
 }
 
 public sealed record JobResult(string Drawing, string Status, int? ExitCode, DateTimeOffset StartedUtc, DateTimeOffset FinishedUtc, string? LogPath, string? Error);
+public sealed record BatchRunResult(
+    int ExitCode,
+    IReadOnlyList<JobResult> Jobs,
+    string? StructuredSummaryPath,
+    string? ReadableSummaryPath,
+    string? CombinedCsvPath,
+    IReadOnlyList<string> Issues,
+    bool WasCancellationRequested);
 internal readonly record struct CsvFileStamp(long Length, DateTime LastWriteUtc);

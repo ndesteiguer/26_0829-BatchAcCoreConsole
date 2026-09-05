@@ -19,6 +19,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _outputText = string.Empty;
     private string _runSummary = "Open or create a profile, then run preflight before starting a batch.";
     private CancellationTokenSource? _cancellation;
+    private BatchRunResult? _lastRun;
 
     public MainWindow()
     {
@@ -48,6 +49,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public bool CanEdit => !IsRunning;
     public bool CanStart => CanEdit && _canRun;
+    public bool CanCreateRerun => CanEdit && _lastRun is not null && _lastRun.Jobs.Any(job => job.Status is "Failed" or "TimedOut" or "Cancelled");
 
     public string OutputText
     {
@@ -94,6 +96,52 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _ = SaveProfile();
     }
 
+    private void CreateRerun_Click(object sender, RoutedEventArgs e)
+    {
+        var drawings = _lastRun?.Jobs
+            .Where(job => job.Status is "Failed" or "TimedOut" or "Cancelled")
+            .Select(job => job.Drawing)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray() ?? [];
+        if (drawings.Length == 0) return;
+
+        var dialog = new SaveFileDialog
+        {
+            Filter = "Batch profiles (*.json)|*.json|All files (*.*)|*.*",
+            DefaultExt = ".json",
+            FileName = "failed-rerun.json"
+        };
+        if (dialog.ShowDialog(this) != true) return;
+
+        var drawingListPath = Path.Combine(
+            Path.GetDirectoryName(dialog.FileName)!,
+            Path.GetFileNameWithoutExtension(dialog.FileName) + ".rerun.drawings.txt");
+        if (File.Exists(drawingListPath) &&
+            MessageBox.Show(this, "The companion drawing-list file already exists. Replace it?", Title, MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            return;
+
+        try
+        {
+            var rerunSettings = JsonSerializer.Deserialize<BatchSettings>(JsonSerializer.Serialize(Settings, ProfileJsonOptions))
+                ?? throw new InvalidOperationException("Could not create a copy of the current profile.");
+            rerunSettings.FileListPath = drawingListPath;
+            rerunSettings.InputDirectory = null;
+            File.WriteAllLines(drawingListPath, drawings);
+            File.WriteAllText(dialog.FileName, JsonSerializer.Serialize(rerunSettings, ProfileJsonOptions));
+
+            Settings = rerunSettings;
+            _profilePath = dialog.FileName;
+            ClearRunState();
+            RunPreflight();
+            RunSummary = "Created a separate failed-only rerun profile and drawing list. The original profile was not changed.";
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(this, "Could not create the rerun profile.\n\n" + exception.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     private void RunPreflight_Click(object sender, RoutedEventArgs e) => RunPreflight();
 
     private async void StartBatch_Click(object sender, RoutedEventArgs e)
@@ -110,8 +158,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         try
         {
-            var exitCode = await BatchRunner.RunAsync([_profilePath!], output, progress, _cancellation.Token);
-            RunSummary = "Batch completed with exit code " + exitCode + ". " + BuildQueueSummary();
+            _lastRun = await BatchRunner.RunWithResultAsync([_profilePath!], output, progress, _cancellation.Token);
+            OnPropertyChanged(nameof(CanCreateRerun));
+            RunSummary = "Batch completed with exit code " + _lastRun.ExitCode + ". " + BuildQueueSummary();
         }
         catch (Exception exception)
         {
@@ -134,6 +183,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private bool RunPreflight()
     {
+        _lastRun = null;
+        OnPropertyChanged(nameof(CanCreateRerun));
         var baseDirectory = _profilePath is null ? Environment.CurrentDirectory : Path.GetDirectoryName(_profilePath)!;
         var report = BatchPreflight.Check(Settings, baseDirectory);
         Diagnostics.Clear();
@@ -184,6 +235,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 item.Status = progress.Status ?? item.Status;
                 item.WorkerId = progress.WorkerId;
                 item.Message = progress.Message;
+                if (progress.Result is not null) item.ApplyResult(progress.Result);
             }
         }
 
@@ -216,10 +268,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void ClearRunState()
     {
         _canRun = false;
+        _lastRun = null;
         Diagnostics.Clear();
         Queue.Clear();
         OutputText = string.Empty;
         OnPropertyChanged(nameof(CanStart));
+        OnPropertyChanged(nameof(CanCreateRerun));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

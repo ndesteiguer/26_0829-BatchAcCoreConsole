@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="BatchAcCore.Core/**/*.cs" />
+    <Compile Remove="BatchAcCore.Gui/**/*.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="BatchAcCore.Core/BatchAcCore.Core.csproj" />

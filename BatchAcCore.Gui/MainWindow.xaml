@@ -9,6 +9,7 @@
             <Button Content="Save profile as..." Click="SaveProfileAs_Click" Padding="12,5" Margin="0,0,24,0" />
             <Button Content="Run preflight" Click="RunPreflight_Click" Padding="12,5" Margin="0,0,8,0" IsEnabled="{Binding CanEdit}" />
             <Button Content="Start batch" Click="StartBatch_Click" Padding="12,5" Margin="0,0,8,0" IsEnabled="{Binding CanStart}" />
+            <Button Content="Create failed-only rerun" Click="CreateRerun_Click" Padding="12,5" Margin="0,0,8,0" IsEnabled="{Binding CanCreateRerun}" />
             <Button Content="Cancel queued work" Click="Cancel_Click" Padding="12,5" IsEnabled="{Binding IsRunning}" />
         </StackPanel>
 
@@ -66,7 +67,10 @@
                             <DataGridTextColumn Header="Drawing" Binding="{Binding Name}" Width="220" />
                             <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="110" />
                             <DataGridTextColumn Header="Worker" Binding="{Binding WorkerId}" Width="70" />
+                            <DataGridTextColumn Header="Exit" Binding="{Binding ExitCode}" Width="60" />
+                            <DataGridTextColumn Header="Elapsed" Binding="{Binding Elapsed}" Width="100" />
                             <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="280" />
+                            <DataGridTextColumn Header="Log" Binding="{Binding LogPath}" Width="200" />
                             <DataGridTextColumn Header="Full path" Binding="{Binding Drawing}" Width="*" />
                         </DataGrid.Columns>
                     </DataGrid>
