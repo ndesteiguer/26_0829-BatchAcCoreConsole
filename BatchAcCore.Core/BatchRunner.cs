@@ -74,7 +74,7 @@ public static class BatchRunner
         string[] drawings;
         try
         {
-            drawings = GetDrawings(settings).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            drawings = DiscoverDrawings(settings).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         }
         catch (ArgumentException exception)
         {
@@ -319,7 +319,7 @@ public static class BatchRunner
         .EnumerateFiles(directory, "*.csv", SearchOption.TopDirectoryOnly)
         .ToDictionary(path => Path.GetFullPath(path), GetCsvFileStamp, StringComparer.OrdinalIgnoreCase);
 
-    private static IReadOnlyList<string> GetExpectedCsvFiles(string workDirectory, IReadOnlyList<string> drawings, string routineFunction) => drawings
+    internal static IReadOnlyList<string> GetExpectedCsvFiles(string workDirectory, IReadOnlyList<string> drawings, string routineFunction) => drawings
         .Select(drawing => Path.Combine(workDirectory, $"{Path.GetFileNameWithoutExtension(drawing)}.{routineFunction}.csv"))
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
@@ -391,7 +391,7 @@ public static class BatchRunner
         }
     }
 
-    private static IEnumerable<string> GetDrawings(BatchSettings settings)
+    internal static IEnumerable<string> DiscoverDrawings(BatchSettings settings)
     {
         var drawings = new List<string>();
         if (!string.IsNullOrWhiteSpace(settings.FileListPath))
