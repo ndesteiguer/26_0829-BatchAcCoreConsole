@@ -68,9 +68,12 @@
                     <DataGrid Grid.Row="1" ItemsSource="{Binding Queue}" SelectedItem="{Binding SelectedQueueItem}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Drawing" Binding="{Binding Name}" Width="220" />
+                            <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="110" />
                             <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="110" />
                             <DataGridTextColumn Header="Worker" Binding="{Binding WorkerId}" Width="70" />
                             <DataGridTextColumn Header="Exit" Binding="{Binding ExitCode}" Width="60" />
+                            <DataGridTextColumn Header="Started (UTC)" Binding="{Binding StartedUtc}" Width="160" />
+                            <DataGridTextColumn Header="Finished (UTC)" Binding="{Binding FinishedUtc}" Width="160" />
                             <DataGridTextColumn Header="Elapsed" Binding="{Binding Elapsed}" Width="100" />
                             <DataGridTextColumn Header="Message" Binding="{Binding Message}" Width="280" />
                             <DataGridTextColumn Header="Log" Binding="{Binding LogPath}" Width="200" />

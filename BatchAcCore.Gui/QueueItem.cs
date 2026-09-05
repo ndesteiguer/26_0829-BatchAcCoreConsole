@@ -5,7 +5,7 @@ using BatchAcCore.Core;
 
 namespace BatchAcCore.Gui;
 
-public sealed class QueueItem(string drawing) : INotifyPropertyChanged
+public sealed class QueueItem(string drawing, string source) : INotifyPropertyChanged
 {
     private string _status = "Queued";
     private int? _workerId;
@@ -16,6 +16,7 @@ public sealed class QueueItem(string drawing) : INotifyPropertyChanged
     private DateTimeOffset? _finishedUtc;
 
     public string Drawing { get; } = drawing;
+    public string Source { get; } = source;
     public string Name => Path.GetFileName(Drawing);
 
     public string Status

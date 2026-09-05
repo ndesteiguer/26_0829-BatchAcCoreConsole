@@ -235,7 +235,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         foreach (var diagnostic in report.Diagnostics) Diagnostics.Add(diagnostic);
 
         Queue.Clear();
-        foreach (var drawing in report.Drawings) Queue.Add(new QueueItem(drawing));
+        var inputSource = string.IsNullOrWhiteSpace(Settings.FileListPath) ? "Input directory" : "Drawing list";
+        foreach (var drawing in report.Drawings) Queue.Add(new QueueItem(drawing, inputSource));
 
         _canRun = report.CanRun;
         OnPropertyChanged(nameof(CanStart));
