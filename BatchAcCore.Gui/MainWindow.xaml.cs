@@ -96,6 +96,24 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _ = SaveProfile();
     }
 
+    private void BrowseCoreConsole_Click(object sender, RoutedEventArgs e) =>
+        ChooseFile("Executables (*.exe)|*.exe|All files (*.*)|*.*", path => Settings.AcCoreConsolePath = path);
+
+    private void BrowseLisp_Click(object sender, RoutedEventArgs e) =>
+        ChooseFile("AutoLISP routines (*.lsp)|*.lsp|All files (*.*)|*.*", path => Settings.LispFilePath = path);
+
+    private void BrowseDrawingList_Click(object sender, RoutedEventArgs e) =>
+        ChooseFile("Drawing lists (*.txt)|*.txt|All files (*.*)|*.*", path => Settings.FileListPath = path);
+
+    private void BrowseInputDirectory_Click(object sender, RoutedEventArgs e) =>
+        ChooseFolder(path => Settings.InputDirectory = path);
+
+    private void BrowseWorkDirectory_Click(object sender, RoutedEventArgs e) =>
+        ChooseFolder(path => Settings.WorkDirectory = path);
+
+    private void BrowseCombinedDirectory_Click(object sender, RoutedEventArgs e) =>
+        ChooseFolder(path => Settings.CombinedCsvOutputDirectory = path);
+
     private void CreateRerun_Click(object sender, RoutedEventArgs e)
     {
         var drawings = _lastRun?.Jobs
@@ -199,6 +217,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ? "Preflight passed. " + report.Drawings.Count + " drawing(s) are ready for review."
             : "Preflight found one or more errors. Resolve them before starting the batch.";
         return report.CanRun;
+    }
+
+    private void ChooseFile(string filter, Action<string> setPath)
+    {
+        var dialog = new OpenFileDialog { Filter = filter };
+        if (dialog.ShowDialog(this) != true) return;
+        setPath(dialog.FileName);
+        OnPropertyChanged(nameof(Settings));
+    }
+
+    private void ChooseFolder(Action<string> setPath)
+    {
+        var dialog = new OpenFolderDialog();
+        if (dialog.ShowDialog(this) != true) return;
+        setPath(dialog.FolderName);
+        OnPropertyChanged(nameof(Settings));
     }
 
     private bool EnsureProfilePath()

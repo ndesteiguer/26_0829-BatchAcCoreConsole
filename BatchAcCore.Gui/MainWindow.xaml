@@ -29,17 +29,17 @@
                         </Grid.RowDefinitions>
 
                         <TextBlock Grid.Row="0" Text="Core Console executable" VerticalAlignment="Center" Margin="0,6" />
-                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding Settings.AcCoreConsolePath, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
+                        <DockPanel Grid.Row="0" Grid.Column="1" Margin="0,3"><Button DockPanel.Dock="Right" Content="Browse..." Click="BrowseCoreConsole_Click" Margin="8,0,0,0" /><TextBox Text="{Binding Settings.AcCoreConsolePath, UpdateSourceTrigger=PropertyChanged}" /></DockPanel>
                         <TextBlock Grid.Row="1" Text="AutoLISP routine (.lsp)" VerticalAlignment="Center" Margin="0,6" />
-                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Settings.LispFilePath, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
+                        <DockPanel Grid.Row="1" Grid.Column="1" Margin="0,3"><Button DockPanel.Dock="Right" Content="Browse..." Click="BrowseLisp_Click" Margin="8,0,0,0" /><TextBox Text="{Binding Settings.LispFilePath, UpdateSourceTrigger=PropertyChanged}" /></DockPanel>
                         <TextBlock Grid.Row="2" Text="Drawing list file" VerticalAlignment="Center" Margin="0,6" />
-                        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Settings.FileListPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
+                        <DockPanel Grid.Row="2" Grid.Column="1" Margin="0,3"><Button DockPanel.Dock="Right" Content="Browse..." Click="BrowseDrawingList_Click" Margin="8,0,0,0" /><TextBox Text="{Binding Settings.FileListPath, UpdateSourceTrigger=PropertyChanged}" /></DockPanel>
                         <TextBlock Grid.Row="3" Text="or input directory" VerticalAlignment="Center" Margin="0,6" />
-                        <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding Settings.InputDirectory, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
+                        <DockPanel Grid.Row="3" Grid.Column="1" Margin="0,3"><Button DockPanel.Dock="Right" Content="Browse..." Click="BrowseInputDirectory_Click" Margin="8,0,0,0" /><TextBox Text="{Binding Settings.InputDirectory, UpdateSourceTrigger=PropertyChanged}" /></DockPanel>
                         <TextBlock Grid.Row="4" Text="Work directory" VerticalAlignment="Center" Margin="0,6" />
-                        <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding Settings.WorkDirectory, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
+                        <DockPanel Grid.Row="4" Grid.Column="1" Margin="0,3"><Button DockPanel.Dock="Right" Content="Browse..." Click="BrowseWorkDirectory_Click" Margin="8,0,0,0" /><TextBox Text="{Binding Settings.WorkDirectory, UpdateSourceTrigger=PropertyChanged}" /></DockPanel>
                         <TextBlock Grid.Row="5" Text="Combined CSV directory" VerticalAlignment="Center" Margin="0,6" />
-                        <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding Settings.CombinedCsvOutputDirectory, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" />
+                        <DockPanel Grid.Row="5" Grid.Column="1" Margin="0,3"><Button DockPanel.Dock="Right" Content="Browse..." Click="BrowseCombinedDirectory_Click" Margin="8,0,0,0" /><TextBox Text="{Binding Settings.CombinedCsvOutputDirectory, UpdateSourceTrigger=PropertyChanged}" /></DockPanel>
                         <TextBlock Grid.Row="6" Text="Workers" VerticalAlignment="Center" Margin="0,6" />
                         <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding Settings.WorkerCount, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" Width="100" HorizontalAlignment="Left" />
                         <TextBlock Grid.Row="7" Text="Timeout (minutes)" VerticalAlignment="Center" Margin="0,6" />
