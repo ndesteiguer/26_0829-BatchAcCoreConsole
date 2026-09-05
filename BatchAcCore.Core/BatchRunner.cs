@@ -6,6 +6,12 @@ using System.Text.RegularExpressions;
 
 namespace BatchAcCore.Core;
 
+public interface IBatchOutput
+{
+    void WriteLine(string message);
+    void WriteError(string message);
+}
+
 public static class BatchRunner
 {
     private const string LispLoadFailure = "Lisp routine failed to load.";
@@ -16,17 +22,17 @@ public static class BatchRunner
         WriteIndented = true
     };
 
-    public static async Task<int> RunAsync(string[] args)
+    public static async Task<int> RunAsync(string[] args, IBatchOutput output)
     {
         if (args.Length != 1 || args[0] is "--help" or "-h")
         {
-            Console.WriteLine("Usage: BatchAcCoreConsole <settings.json>");
-            Console.WriteLine("Copy settings.example.json, set the paths and run this command.");
+            output.WriteLine("Usage: BatchAcCoreConsole <settings.json>");
+            output.WriteLine("Copy settings.example.json, set the paths and run this command.");
             return args.Length == 1 ? 0 : 2;
         }
 
         var settingsFile = Path.GetFullPath(args[0]);
-        if (!File.Exists(settingsFile)) return Fail($"Settings file not found: {settingsFile}");
+        if (!File.Exists(settingsFile)) return Fail(output, $"Settings file not found: {settingsFile}");
 
         BatchSettings? settings;
         try
@@ -35,13 +41,13 @@ public static class BatchRunner
         }
         catch (JsonException exception)
         {
-            return Fail($"Invalid JSON: {exception.Message}");
+            return Fail(output, $"Invalid JSON: {exception.Message}");
         }
 
-        if (settings is null) return Fail("Settings file is empty.");
+        if (settings is null) return Fail(output, "Settings file is empty.");
         var baseDirectory = Path.GetDirectoryName(settingsFile)!;
         try { settings.Normalize(baseDirectory); }
-        catch (Exception exception) { return Fail(exception.Message); }
+        catch (Exception exception) { return Fail(output, exception.Message); }
 
         string[] drawings;
         try
@@ -50,18 +56,18 @@ public static class BatchRunner
         }
         catch (ArgumentException exception)
         {
-            return Fail(exception.Message);
+            return Fail(output, exception.Message);
         }
-        if (drawings.Length == 0) return Fail("No DWG files were found.");
+        if (drawings.Length == 0) return Fail(output, "No DWG files were found.");
         var expectedCsvFiles = GetExpectedCsvFiles(settings.WorkDirectory!, drawings, settings.RoutineFunction);
         if (expectedCsvFiles.Count != drawings.Length)
-            return Fail("Each drawing must have a unique filename because CSV output names are derived from the drawing filename and LISP function name.");
+            return Fail(output, "Each drawing must have a unique filename because CSV output names are derived from the drawing filename and LISP function name.");
 
         Directory.CreateDirectory(settings.WorkDirectory!);
         var isolateRoot = Path.Combine(Path.GetTempPath(), $"BatchAcCoreConsole-{Guid.NewGuid():N}");
         var csvFilesBeforeBatch = SnapshotCsvFiles(settings.WorkDirectory!);
-        Console.WriteLine($"Queued {drawings.Length} drawing(s), using {settings.WorkerCount} worker(s).");
-        Console.WriteLine($"Work directory: {settings.WorkDirectory}");
+        output.WriteLine($"Queued {drawings.Length} drawing(s), using {settings.WorkerCount} worker(s).");
+        output.WriteLine($"Work directory: {settings.WorkDirectory}");
 
         var results = new ConcurrentBag<JobResult>();
         using var semaphore = new SemaphoreSlim(settings.WorkerCount);
@@ -77,7 +83,7 @@ public static class BatchRunner
                     var skippedAt = DateTimeOffset.UtcNow;
                     const string reason = "Skipped because the LISP routine failed to load in another worker.";
                     results.Add(new(drawing, "Skipped", null, skippedAt, skippedAt, null, reason));
-                    Console.WriteLine($"SKIPPED {Path.GetFileName(drawing)} ({reason})");
+                    output.WriteLine($"SKIPPED {Path.GetFileName(drawing)} ({reason})");
                     return;
                 }
 
@@ -85,7 +91,7 @@ public static class BatchRunner
                     throw new InvalidOperationException("A worker slot was unavailable.");
                 try
                 {
-                    var result = await RunJobAsync(settings, drawing, isolateRoot, workerId);
+                    var result = await RunJobAsync(settings, drawing, isolateRoot, workerId, output);
                     if (string.Equals(result.Error, LispLoadFailure, StringComparison.Ordinal))
                         Interlocked.Exchange(ref lispLoadFailureDetected, 1);
                     results.Add(result);
@@ -102,7 +108,7 @@ public static class BatchRunner
         });
         await Task.WhenAll(jobs);
         if (!TryDeleteDirectory(isolateRoot))
-            Console.Error.WriteLine($"Could not remove temporary Core Console profile data: {isolateRoot}");
+            output.WriteError($"Could not remove temporary Core Console profile data: {isolateRoot}");
 
         var ordered = results.OrderBy(r => r.Drawing, StringComparer.OrdinalIgnoreCase).ToArray();
         var succeeded = ordered.Count(result => result.Status == "Succeeded");
@@ -116,7 +122,7 @@ public static class BatchRunner
         {
             const string issue = "CSV combination skipped because the LISP routine failed to load.";
             issues.Add(issue);
-            Console.Error.WriteLine(issue);
+            output.WriteError(issue);
         }
         else
         {
@@ -128,20 +134,20 @@ public static class BatchRunner
                 if (missingCsvFiles.Count > 0)
                     combinationError = $"{combinationError}{Environment.NewLine}Missing expected CSV file(s):{Environment.NewLine}{string.Join(Environment.NewLine, missingCsvFiles)}";
                 issues.Add(combinationError);
-                Console.Error.WriteLine(combinationError);
+                output.WriteError(combinationError);
             }
 
             try
             {
                 combinedCsvPath = await CombineCsvFilesAsync(settings.CombinedCsvOutputDirectory!, batchCsvFiles);
-                Console.WriteLine($"Combined CSV: {combinedCsvPath}");
+                output.WriteLine($"Combined CSV: {combinedCsvPath}");
             }
             catch (Exception exception)
             {
                 combinationError = combinationError is null ? exception.Message : $"{combinationError}{Environment.NewLine}{exception.Message}";
                 var issue = $"CSV combination failed: {exception.Message}";
                 issues.Add(issue);
-                Console.Error.WriteLine(issue);
+                output.WriteError(issue);
             }
         }
 
@@ -152,18 +158,18 @@ public static class BatchRunner
         {
             Directory.CreateDirectory(settings.CombinedCsvOutputDirectory!);
             await File.WriteAllTextAsync(readableSummaryPath, BuildReadableSummary(settings, ordered, succeeded, failed, skipped, elapsedRuntime, combinedCsvPath, issues, summaryPath));
-            Console.WriteLine($"Batch summary: {readableSummaryPath}");
+            output.WriteLine($"Batch summary: {readableSummaryPath}");
         }
         catch (Exception exception)
         {
             combinationError = combinationError is null ? exception.Message : $"{combinationError}{Environment.NewLine}{exception.Message}";
-            Console.Error.WriteLine($"Could not write batch summary: {exception.Message}");
+            output.WriteError($"Could not write batch summary: {exception.Message}");
         }
-        Console.WriteLine($"Finished: {succeeded} succeeded, {failed} failed, {skipped} skipped. Summary: {summaryPath}");
+        output.WriteLine($"Finished: {succeeded} succeeded, {failed} failed, {skipped} skipped. Summary: {summaryPath}");
         return succeeded == ordered.Length && combinationError is null ? 0 : 1;
     }
 
-    private static async Task<JobResult> RunJobAsync(BatchSettings settings, string drawing, string isolateRoot, int workerId)
+    private static async Task<JobResult> RunJobAsync(BatchSettings settings, string drawing, string isolateRoot, int workerId, IBatchOutput output)
     {
         var jobId = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}";
         var scriptDirectory = settings.KeepScripts ? settings.WorkDirectory! : isolateRoot;
@@ -174,7 +180,7 @@ public static class BatchRunner
         // Reuse a bounded number of isolated registry identities rather than creating one per drawing.
         var isolateUserId = $"BatchAcCoreConsole-Worker-{workerId}";
         var started = DateTimeOffset.UtcNow;
-        Console.WriteLine($"START {Path.GetFileName(drawing)}");
+        output.WriteLine($"START {Path.GetFileName(drawing)}");
 
         try
         {
@@ -193,30 +199,30 @@ public static class BatchRunner
                 }
             };
             process.Start();
-            var output = CaptureProcessOutputAsync(process, settings.CreateLogFiles);
+            var processOutput = CaptureProcessOutputAsync(process, settings.CreateLogFiles);
             var completion = process.WaitForExitAsync();
             var exited = await Task.WhenAny(completion, Task.Delay(TimeSpan.FromMinutes(settings.TimeoutMinutes))) == completion;
             if (!exited)
             {
                 process.Kill(entireProcessTree: true);
                 await process.WaitForExitAsync();
-                var outputText = await output;
+                var outputText = await processOutput;
                 if (outputText is not null) await File.WriteAllTextAsync(logPath!, outputText);
                 return new(drawing, "TimedOut", null, started, DateTimeOffset.UtcNow, logPath, "Worker exceeded configured timeout.");
             }
 
-            var completedOutput = await output;
+            var completedOutput = await processOutput;
             if (completedOutput is not null) await File.WriteAllTextAsync(logPath!, completedOutput);
             var lispResult = File.Exists(resultPath) ? await File.ReadAllTextAsync(resultPath) : "No completion marker was written.";
             File.Delete(resultPath);
             var status = process.ExitCode == 0 && lispResult.Trim() == "OK" ? "Succeeded" : "Failed";
-            Console.WriteLine($"{status.ToUpperInvariant()} {Path.GetFileName(drawing)} (exit {process.ExitCode})");
+            output.WriteLine($"{status.ToUpperInvariant()} {Path.GetFileName(drawing)} (exit {process.ExitCode})");
             return new(drawing, status, process.ExitCode, started, DateTimeOffset.UtcNow, logPath, status == "Succeeded" ? null : lispResult.Trim());
         }
         catch (Exception exception)
         {
             if (logPath is not null) await File.WriteAllTextAsync(logPath, exception.ToString());
-            Console.Error.WriteLine($"FAILED {Path.GetFileName(drawing)}: {exception.Message}");
+            output.WriteError($"FAILED {Path.GetFileName(drawing)}: {exception.Message}");
             return new(drawing, "Failed", null, started, DateTimeOffset.UtcNow, logPath, exception.Message);
         }
         finally
@@ -480,7 +486,7 @@ public static class BatchRunner
 
     private static string FormatElapsedRuntime(TimeSpan elapsedRuntime) => $"{(int)elapsedRuntime.TotalHours:D2}:{elapsedRuntime.Minutes:D2}:{elapsedRuntime.Seconds:D2}";
 
-    private static int Fail(string message) { Console.Error.WriteLine($"Error: {message}"); return 2; }
+    private static int Fail(IBatchOutput output, string message) { output.WriteError($"Error: {message}"); return 2; }
 }
 
 internal sealed class BatchSettings
