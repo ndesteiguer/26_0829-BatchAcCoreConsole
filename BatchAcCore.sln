@@ -8,6 +8,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BatchAcCoreConsole", "Batch
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BatchAcCore.Gui", "BatchAcCore.Gui\BatchAcCore.Gui.csproj", "{7FCDCBAE-C9ED-4232-B86A-2107772BD626}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BatchAcCore.Tests", "BatchAcCore.Tests\BatchAcCore.Tests.csproj", "{98A57259-4F77-4C79-8320-2938262CFA0B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -26,5 +28,9 @@ Global
 		{7FCDCBAE-C9ED-4232-B86A-2107772BD626}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7FCDCBAE-C9ED-4232-B86A-2107772BD626}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7FCDCBAE-C9ED-4232-B86A-2107772BD626}.Release|Any CPU.Build.0 = Release|Any CPU
+		{98A57259-4F77-4C79-8320-2938262CFA0B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{98A57259-4F77-4C79-8320-2938262CFA0B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{98A57259-4F77-4C79-8320-2938262CFA0B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{98A57259-4F77-4C79-8320-2938262CFA0B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

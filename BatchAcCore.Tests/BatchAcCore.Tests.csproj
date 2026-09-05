@@ -6,11 +6,6 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Remove="BatchAcCore.Core/**/*.cs" />
-    <Compile Remove="BatchAcCore.Gui/**/*.cs" />
-    <Compile Remove="BatchAcCore.Tests/**/*.cs" />
-  </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="BatchAcCore.Core/BatchAcCore.Core.csproj" />
+    <ProjectReference Include="..\BatchAcCore.Core\BatchAcCore.Core.csproj" />
   </ItemGroup>
 </Project>

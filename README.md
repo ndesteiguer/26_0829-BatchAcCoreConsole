@@ -49,6 +49,22 @@ The agreed product, functional, and architectural scope is recorded in:
 - [GUI functional specification](GUI_FUNCTIONAL_SPEC.md)
 - [GUI architecture plan](GUI_ARCHITECTURE_PLAN.md)
 
+## Verification
+
+Build every project:
+
+```powershell
+dotnet build .\BatchAcCore.sln
+```
+
+Run the dependency-free Core verification harness:
+
+```powershell
+dotnet run --project .\BatchAcCore.Tests\BatchAcCore.Tests.csproj
+```
+
+It validates preflight and a controlled non-AutoCAD failure path, including job-result fields and summaries. A live GUI run still requires a workstation with the intended AutoCAD/Core Console installation and representative drawings.
+
 ## What each worker does
 
 For every drawing, the runner creates a unique temporary `.scr`, launches:
