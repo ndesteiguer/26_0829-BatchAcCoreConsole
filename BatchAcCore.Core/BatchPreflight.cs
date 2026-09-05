@@ -25,11 +25,13 @@ public static class BatchPreflight
         try
         {
             settings.Normalize(profileDirectory);
-            diagnostics.Add(new(PreflightSeverity.Pass, "Profile", "Required paths and execution settings are valid."));
+            diagnostics.Add(new(PreflightSeverity.Pass, "Core Console", $"Found executable: {settings.AcCoreConsolePath}"));
+            diagnostics.Add(new(PreflightSeverity.Pass, "AutoLISP routine", $"Validated one-argument function '{settings.RoutineFunction}' in: {settings.LispFilePath}"));
+            diagnostics.Add(new(PreflightSeverity.Pass, "Execution settings", $"Using {settings.WorkerCount} worker(s) with a {settings.TimeoutMinutes}-minute timeout."));
         }
         catch (Exception exception)
         {
-            diagnostics.Add(new(PreflightSeverity.Error, "Profile", exception.Message));
+            diagnostics.Add(new(PreflightSeverity.Error, GetValidationCheck(exception), exception.Message));
             return new(null, [], diagnostics);
         }
 
@@ -66,6 +68,24 @@ public static class BatchPreflight
             diagnostics.Add(new(PreflightSeverity.Warning, "Path portability", "A mapped drive is in use. Prefer a UNC path if Core Console runs under a different access context."));
 
         return new(settings, drawings, diagnostics);
+    }
+
+    private static string GetValidationCheck(Exception exception)
+    {
+        var message = exception.Message;
+        if (message.Contains("AcCoreConsolePath", StringComparison.OrdinalIgnoreCase))
+            return "Core Console";
+        if (message.Contains("LispFilePath", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("function '", StringComparison.OrdinalIgnoreCase))
+            return "AutoLISP routine";
+        if (message.Contains("FileListPath", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("InputDirectory", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("exactly one", StringComparison.OrdinalIgnoreCase))
+            return "Drawing input";
+        if (message.Contains("WorkDirectory", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("CombinedCsvOutputDirectory", StringComparison.OrdinalIgnoreCase))
+            return "Output directories";
+        return "Execution settings";
     }
 
     private static void ReportDirectory(ICollection<PreflightDiagnostic> diagnostics, string check, string path)

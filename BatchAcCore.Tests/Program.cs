@@ -47,6 +47,14 @@ static async Task VerifyPreflightAndControlledFailureAsync(string workspace)
     var preflight = BatchPreflight.Check(settings, workspace);
     Assert(preflight.CanRun, "Expected the controlled validation profile to pass preflight.");
     Assert(preflight.Drawings.Count == 1, "Preflight should resolve one drawing.");
+    Assert(preflight.Diagnostics.Any(diagnostic => diagnostic is { Severity: PreflightSeverity.Pass, Check: "Core Console" }), "Preflight must report a found Core Console executable.");
+
+    var invalidSettings = JsonSerializer.Deserialize<BatchSettings>(JsonSerializer.Serialize(settings))
+        ?? throw new InvalidOperationException("Could not copy the validation profile.");
+    invalidSettings.AcCoreConsolePath = Path.Combine(workspace, "missing-accoreconsole.exe");
+    var invalidPreflight = BatchPreflight.Check(invalidSettings, workspace);
+    Assert(!invalidPreflight.CanRun, "A missing Core Console executable must block the batch.");
+    Assert(invalidPreflight.Diagnostics.Single().Check == "Core Console", "A missing Core Console executable must be reported under the Core Console check.");
 
     File.WriteAllText(settingsPath, JsonSerializer.Serialize(settings));
     var output = new CapturedOutput();
