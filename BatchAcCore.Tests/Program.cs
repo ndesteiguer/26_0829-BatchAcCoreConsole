@@ -50,6 +50,21 @@ static async Task VerifyPreflightAndControlledFailureAsync(string workspace)
     Assert(preflight.Drawings.Count == 1, "Preflight should resolve one drawing.");
     Assert(preflight.Diagnostics.Any(diagnostic => diagnostic is { Severity: PreflightSeverity.Pass, Check: "Core Console" }), "Preflight must report a found Core Console executable.");
 
+    var originalAttributes = File.GetAttributes(drawingPath);
+    try
+    {
+        File.SetAttributes(drawingPath, originalAttributes | FileAttributes.ReadOnly);
+        settings.SaveAfterRun = true;
+        var readOnlyPreflight = BatchPreflight.Check(settings, workspace);
+        Assert(readOnlyPreflight.CanRun, "A read-only drawing must warn but not block preflight.");
+        Assert(readOnlyPreflight.Diagnostics.Any(diagnostic => diagnostic is { Severity: PreflightSeverity.Warning, Check: "Drawing changes" } && diagnostic.Message.Contains("Windows read-only attribute", StringComparison.Ordinal)), "A read-only drawing must be reported before a save-enabled batch.");
+    }
+    finally
+    {
+        File.SetAttributes(drawingPath, originalAttributes);
+        settings.SaveAfterRun = false;
+    }
+
     var invalidSettings = JsonSerializer.Deserialize<BatchSettings>(JsonSerializer.Serialize(settings))
         ?? throw new InvalidOperationException("Could not copy the validation profile.");
     invalidSettings.AcCoreConsolePath = Path.Combine(workspace, "missing-accoreconsole.exe");

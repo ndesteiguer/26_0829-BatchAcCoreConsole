@@ -29,7 +29,7 @@
                             <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
                         <TextBlock Grid.Row="0" Text="Core Console executable" VerticalAlignment="Center" Margin="0,6" />
@@ -52,6 +52,7 @@
                         <CheckBox Grid.Row="9" Grid.Column="1" Content="Skip invalid drawing-list entries" IsChecked="{Binding Settings.SkipInvalidFileListEntries}" Margin="0,6" />
                         <CheckBox Grid.Row="10" Grid.Column="1" Content="Save drawings after successful processing" IsChecked="{Binding Settings.SaveAfterRun}" Margin="0,6" />
                         <CheckBox Grid.Row="11" Grid.Column="1" Content="Keep generated scripts" IsChecked="{Binding Settings.KeepScripts}" Margin="0,6" />
+                        <CheckBox Grid.Row="12" Grid.Column="1" Content="Create per-job log files" IsChecked="{Binding Settings.CreateLogFiles}" Margin="0,6" />
                     </Grid>
                 </ScrollViewer>
             </TabItem>

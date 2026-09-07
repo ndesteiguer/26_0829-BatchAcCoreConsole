@@ -63,7 +63,10 @@ public static class BatchPreflight
         ReportDirectory(diagnostics, "Combined output directory", settings.CombinedCsvOutputDirectory!);
 
         if (settings.SaveAfterRun)
+        {
             diagnostics.Add(new(PreflightSeverity.Warning, "Drawing changes", "SaveAfterRun is enabled; each successful job may save its DWG in place."));
+            ReportReadOnlyDrawings(diagnostics, drawings);
+        }
         if (UsesMappedDrive(settings))
             diagnostics.Add(new(PreflightSeverity.Warning, "Path portability", "A mapped drive is in use. Prefer a UNC path if Core Console runs under a different access context."));
 
@@ -101,6 +104,39 @@ public static class BatchPreflight
             diagnostics.Add(new(PreflightSeverity.Warning, check, $"Directory will be created when the batch starts: {path}"));
         else
             diagnostics.Add(new(PreflightSeverity.Warning, check, $"Directory will be created when the batch starts if its parent is writable: {path}"));
+    }
+
+    private static void ReportReadOnlyDrawings(ICollection<PreflightDiagnostic> diagnostics, IReadOnlyList<string> drawings)
+    {
+        var readOnlyDrawings = new List<string>();
+        var inaccessibleDrawings = new List<string>();
+
+        foreach (var drawing in drawings)
+        {
+            try
+            {
+                if ((File.GetAttributes(drawing) & FileAttributes.ReadOnly) != 0)
+                    readOnlyDrawings.Add(drawing);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                inaccessibleDrawings.Add(drawing);
+            }
+            catch (IOException)
+            {
+                inaccessibleDrawings.Add(drawing);
+            }
+        }
+
+        if (readOnlyDrawings.Count > 0)
+        {
+            var examples = string.Join(", ", readOnlyDrawings.Take(3).Select(Path.GetFileName));
+            var remainder = readOnlyDrawings.Count > 3 ? $" (and {readOnlyDrawings.Count - 3} more)" : string.Empty;
+            diagnostics.Add(new(PreflightSeverity.Warning, "Drawing changes", $"{readOnlyDrawings.Count} drawing(s) have the Windows read-only attribute: {examples}{remainder}. Saving may fail; for ACC/Forma files, also check cloud lock status and Desktop Connector sync state."));
+        }
+
+        if (inaccessibleDrawings.Count > 0)
+            diagnostics.Add(new(PreflightSeverity.Warning, "Drawing changes", $"Could not read file attributes for {inaccessibleDrawings.Count} drawing(s). Save permission cannot be confirmed before the batch runs."));
     }
 
     private static bool UsesMappedDrive(BatchSettings settings) =>
