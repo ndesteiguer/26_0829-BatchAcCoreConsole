@@ -56,6 +56,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (!SetField(ref _isRunning, value)) return;
             OnPropertyChanged(nameof(CanEdit));
             OnPropertyChanged(nameof(CanStart));
+            OnPropertyChanged(nameof(CanCreateRerun));
             OnPropertyChanged(nameof(CanOpenSelectedLog));
             OnPropertyChanged(nameof(CanOpenBatchSummary));
             OnPropertyChanged(nameof(CanOpenCombinedCsv));
