@@ -15,6 +15,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private static readonly JsonSerializerOptions ProfileJsonOptions = new() { WriteIndented = true };
     private string? _profilePath;
     private BatchSettings _settings = CreateNewSettings();
+    private bool _isFileListInput = true;
     private bool _canRun;
     private bool _isRunning;
     private string _outputText = string.Empty;
@@ -34,7 +35,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         get => _settings;
         private set
         {
-            if (!string.IsNullOrWhiteSpace(value.FileListPath)) value.Recursive = false;
+            _isFileListInput = string.IsNullOrWhiteSpace(value.FileListPath)
+                ? string.IsNullOrWhiteSpace(value.InputDirectory)
+                : true;
+            if (_isFileListInput && !string.IsNullOrWhiteSpace(value.FileListPath)) value.Recursive = false;
             if (!SetField(ref _settings, value)) return;
             OnPropertyChanged(nameof(IsFileListInput));
             OnPropertyChanged(nameof(IsInputDirectoryInput));
@@ -66,10 +70,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public bool CanOpenCombinedCsv => CanEdit && File.Exists(_lastRun?.CombinedCsvPath);
     public bool IsFileListInput
     {
-        get => !string.IsNullOrWhiteSpace(Settings.FileListPath) || string.IsNullOrWhiteSpace(Settings.InputDirectory);
+        get => _isFileListInput;
         set
         {
             if (!value) return;
+            _isFileListInput = true;
             Settings.InputDirectory = null;
             Settings.Recursive = false;
             NotifyInputMethodChanged();
@@ -78,10 +83,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public bool IsInputDirectoryInput
     {
-        get => !IsFileListInput;
+        get => !_isFileListInput;
         set
         {
             if (!value) return;
+            _isFileListInput = false;
             Settings.FileListPath = null;
             NotifyInputMethodChanged();
         }
