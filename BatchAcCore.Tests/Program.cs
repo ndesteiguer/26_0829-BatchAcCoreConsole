@@ -8,6 +8,7 @@ try
 {
     await VerifyPreflightAndControlledFailureAsync(workspace);
     await VerifyUsageAsync();
+    VerifyReadOnlySaveDetection();
     Console.WriteLine("All BatchAcCore verification checks passed.");
     return 0;
 }
@@ -79,6 +80,13 @@ static async Task VerifyUsageAsync()
     var exitCode = await BatchRunner.RunAsync(["--help"], output);
     Assert(exitCode == 0, "The CLI help invocation must retain exit code 0.");
     Assert(output.Lines.Any(message => message.StartsWith("Usage:", StringComparison.Ordinal)), "The CLI usage line must be retained.");
+}
+
+static void VerifyReadOnlySaveDetection()
+{
+    Assert(BatchRunner.ReportsReadOnlyDrawing("Warning: Drawing is read-only; changes will not be saved."), "A read-only drawing warning must be detected.");
+    Assert(BatchRunner.ReportsReadOnlyDrawing("READ ONLY DWG FILE cannot be saved."), "A read-only DWG warning must be detected regardless of case.");
+    Assert(!BatchRunner.ReportsReadOnlyDrawing("The report contains a read-only field."), "Unrelated read-only text must not be treated as a drawing save warning.");
 }
 
 static void Assert(bool condition, string message)

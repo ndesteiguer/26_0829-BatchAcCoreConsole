@@ -250,7 +250,7 @@ public static class BatchRunner
                 }
             };
             process.Start();
-            var processOutput = CaptureProcessOutputAsync(process, settings.CreateLogFiles);
+            var processOutput = CaptureProcessOutputAsync(process, settings.CreateLogFiles || settings.SaveAfterRun);
             var completion = process.WaitForExitAsync();
             var exited = await Task.WhenAny(completion, Task.Delay(TimeSpan.FromMinutes(settings.TimeoutMinutes))) == completion;
             if (!exited)
@@ -258,17 +258,23 @@ public static class BatchRunner
                 process.Kill(entireProcessTree: true);
                 await process.WaitForExitAsync();
                 var outputText = await processOutput;
-                if (outputText is not null) await File.WriteAllTextAsync(logPath!, outputText);
+                if (outputText is not null && logPath is not null) await File.WriteAllTextAsync(logPath, outputText);
                 return new(drawing, "TimedOut", null, started, DateTimeOffset.UtcNow, logPath, "Worker exceeded configured timeout.");
             }
 
             var completedOutput = await processOutput;
-            if (completedOutput is not null) await File.WriteAllTextAsync(logPath!, completedOutput);
+            if (completedOutput is not null && logPath is not null) await File.WriteAllTextAsync(logPath, completedOutput);
             var lispResult = File.Exists(resultPath) ? await File.ReadAllTextAsync(resultPath) : "No completion marker was written.";
             File.Delete(resultPath);
             var status = process.ExitCode == 0 && lispResult.Trim() == "OK" ? "Succeeded" : "Failed";
+            var error = status == "Succeeded" ? null : lispResult.Trim();
+            if (status == "Succeeded" && settings.SaveAfterRun && ReportsReadOnlyDrawing(completedOutput))
+            {
+                status = "Failed";
+                error = "SaveAfterRun is enabled, but Core Console reported that the drawing is read-only and could not be saved.";
+            }
             output.WriteLine($"{status.ToUpperInvariant()} {Path.GetFileName(drawing)} (exit {process.ExitCode})");
-            return new(drawing, status, process.ExitCode, started, DateTimeOffset.UtcNow, logPath, status == "Succeeded" ? null : lispResult.Trim());
+            return new(drawing, status, process.ExitCode, started, DateTimeOffset.UtcNow, logPath, error);
         }
         catch (Exception exception)
         {
@@ -303,6 +309,13 @@ public static class BatchRunner
         var buffer = new char[8192];
         while (await reader.ReadAsync(buffer, 0, buffer.Length) > 0) { }
     }
+
+    internal static bool ReportsReadOnlyDrawing(string? processOutput) =>
+        !string.IsNullOrWhiteSpace(processOutput) &&
+        Regex.IsMatch(
+            processOutput,
+            @"\b(?:drawing|dwg|file)\b[\s\S]{0,120}\b(?:read[-\s]?only|readonly)\b|\b(?:read[-\s]?only|readonly)\b[\s\S]{0,120}\b(?:drawing|dwg|file)\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static string BuildScript(BatchSettings settings, string resultPath)
     {
