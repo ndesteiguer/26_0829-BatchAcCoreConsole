@@ -5,6 +5,8 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
 using BatchAcCore.Core;
 using Microsoft.Win32;
 
@@ -23,10 +25,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private CancellationTokenSource? _cancellation;
     private BatchRunResult? _lastRun;
     private QueueItem? _selectedQueueItem;
+    private string? _completedRunProfileSnapshot;
+    private bool _isResultsStale;
+    private bool _profileEditWarningAcknowledged;
+    private bool _revertingProfileEdit;
 
     public MainWindow()
     {
         InitializeComponent();
+        Settings.PropertyChanged += Settings_PropertyChanged;
         DataContext = this;
     }
 
@@ -35,11 +42,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         get => _settings;
         private set
         {
+            if (ReferenceEquals(_settings, value)) return;
+            _settings.PropertyChanged -= Settings_PropertyChanged;
             _isFileListInput = string.IsNullOrWhiteSpace(value.FileListPath)
                 ? string.IsNullOrWhiteSpace(value.InputDirectory)
                 : true;
             if (_isFileListInput && !string.IsNullOrWhiteSpace(value.FileListPath)) value.Recursive = false;
-            if (!SetField(ref _settings, value)) return;
+            SetField(ref _settings, value);
+            _settings.PropertyChanged += Settings_PropertyChanged;
             OnPropertyChanged(nameof(IsFileListInput));
             OnPropertyChanged(nameof(IsInputDirectoryInput));
         }
@@ -65,7 +75,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public bool CanEdit => !IsRunning;
     public bool CanStart => CanEdit && _canRun;
-    public bool CanCreateRerun => CanEdit && _lastRun is not null && _lastRun.Jobs.Any(job => job.Status is "Failed" or "TimedOut" or "Cancelled");
+    public bool CanCreateRerun => CanEdit && !IsResultsStale && _lastRun is not null && _lastRun.Jobs.Any(job => job.Status is "Failed" or "TimedOut" or "Cancelled");
     public bool CanOpenSelectedLog => CanEdit && File.Exists(SelectedQueueItem?.LogPath);
     public bool CanOpenBatchSummary => CanEdit && File.Exists(_lastRun?.ReadableSummaryPath);
     public bool CanOpenCombinedCsv => CanEdit && File.Exists(_lastRun?.CombinedCsvPath);
@@ -116,8 +126,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         private set => SetField(ref _runSummary, value);
     }
 
+    public bool IsResultsStale
+    {
+        get => _isResultsStale;
+        private set
+        {
+            if (!SetField(ref _isResultsStale, value)) return;
+            OnPropertyChanged(nameof(RunOutputHeader));
+            OnPropertyChanged(nameof(CanCreateRerun));
+        }
+    }
+
+    public string RunOutputHeader => IsResultsStale ? "Run Output (Previous Run)" : "Run Output";
+
     private void NewProfile_Click(object sender, RoutedEventArgs e)
     {
+        if (!ConfirmProfileEdit()) return;
         Settings = CreateNewSettings();
         _profilePath = null;
         ClearRunState();
@@ -126,6 +150,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void OpenProfile_Click(object sender, RoutedEventArgs e)
     {
+        if (!ConfirmProfileEdit()) return;
         var dialog = new OpenFileDialog { Filter = "Batch profiles (*.json)|*.json|All files (*.*)|*.*" };
         if (dialog.ShowDialog(this) != true) return;
 
@@ -225,13 +250,24 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private void RunPreflight_Click(object sender, RoutedEventArgs e) => RunPreflight();
+    private void RunPreflight_Click(object sender, RoutedEventArgs e)
+    {
+        RunPreflight();
+        PreflightQueueTab.IsSelected = true;
+    }
 
     private async void StartBatch_Click(object sender, RoutedEventArgs e)
     {
         if (!RunPreflight() || !EnsureProfilePath()) return;
         if (!SaveProfile()) return;
 
+        _lastRun = null;
+        _completedRunProfileSnapshot = null;
+        IsResultsStale = false;
+        _profileEditWarningAcknowledged = false;
+        OnPropertyChanged(nameof(CanCreateRerun));
+        OnPropertyChanged(nameof(CanOpenBatchSummary));
+        OnPropertyChanged(nameof(CanOpenCombinedCsv));
         IsRunning = true;
         OutputText = string.Empty;
         _cancellation = new CancellationTokenSource();
@@ -242,6 +278,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         try
         {
             _lastRun = await BatchRunner.RunWithResultAsync([_profilePath!], output, progress, _cancellation.Token);
+            _completedRunProfileSnapshot = SerializeSettings();
+            IsResultsStale = false;
+            _profileEditWarningAcknowledged = false;
             OnPropertyChanged(nameof(CanCreateRerun));
             OnPropertyChanged(nameof(CanOpenBatchSummary));
             OnPropertyChanged(nameof(CanOpenCombinedCsv));
@@ -268,10 +307,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private bool RunPreflight()
     {
-        _lastRun = null;
-        OnPropertyChanged(nameof(CanCreateRerun));
-        OnPropertyChanged(nameof(CanOpenBatchSummary));
-        OnPropertyChanged(nameof(CanOpenCombinedCsv));
         var baseDirectory = _profilePath is null ? Environment.CurrentDirectory : Path.GetDirectoryName(_profilePath)!;
         var report = BatchPreflight.Check(Settings, baseDirectory);
         Diagnostics.Clear();
@@ -291,6 +326,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void ChooseFile(string filter, Action<string> setPath)
     {
+        if (!ConfirmProfileEdit()) return;
         var dialog = new OpenFileDialog { Filter = filter };
         if (dialog.ShowDialog(this) != true) return;
         setPath(dialog.FileName);
@@ -299,6 +335,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void ChooseFolder(Action<string> setPath)
     {
+        if (!ConfirmProfileEdit()) return;
         var dialog = new OpenFolderDialog();
         if (dialog.ShowDialog(this) != true) return;
         setPath(dialog.FolderName);
@@ -310,6 +347,70 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(Settings));
         OnPropertyChanged(nameof(IsFileListInput));
         OnPropertyChanged(nameof(IsInputDirectoryInput));
+    }
+
+    private void ProfileEditor_PreviewGotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (e.NewFocus is TextBox or CheckBox or RadioButton && !ConfirmProfileEdit())
+            e.Handled = true;
+    }
+
+    private bool ConfirmProfileEdit()
+    {
+        if (_profileEditWarningAcknowledged || !HasFailedOnlyRerunAvailable()) return true;
+
+        var result = MessageBox.Show(
+            this,
+            "This completed run has failed, timed-out, or cancelled drawings that can be used to create a failed-only rerun. Editing the profile will mark these results as from a previous run and disable that rerun option.\n\nCreate the failed-only rerun now, or continue editing?",
+            Title,
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (result != MessageBoxResult.Yes) return false;
+
+        _profileEditWarningAcknowledged = true;
+        return true;
+    }
+
+    private bool HasFailedOnlyRerunAvailable() =>
+        _lastRun is not null &&
+        !IsResultsStale &&
+        _lastRun.Jobs.Any(job => job.Status is "Failed" or "TimedOut" or "Cancelled");
+
+    private void Settings_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        OnPropertyChanged(nameof(Settings));
+        if (_revertingProfileEdit || _lastRun is null || IsRunning) return;
+
+        var differsFromCompletedRun = !string.Equals(_completedRunProfileSnapshot, SerializeSettings(), StringComparison.Ordinal);
+        if (differsFromCompletedRun && !_profileEditWarningAcknowledged && HasFailedOnlyRerunAvailable() && !ConfirmProfileEdit())
+        {
+            RestoreCompletedRunSettings();
+            return;
+        }
+
+        IsResultsStale = differsFromCompletedRun;
+    }
+
+    private string SerializeSettings() => JsonSerializer.Serialize(Settings, ProfileJsonOptions);
+
+    private void RestoreCompletedRunSettings()
+    {
+        if (string.IsNullOrWhiteSpace(_completedRunProfileSnapshot)) return;
+
+        var restoredSettings = JsonSerializer.Deserialize<BatchSettings>(_completedRunProfileSnapshot);
+        if (restoredSettings is null) return;
+
+        _revertingProfileEdit = true;
+        try
+        {
+            Settings = restoredSettings;
+            IsResultsStale = false;
+        }
+        finally
+        {
+            _revertingProfileEdit = false;
+        }
     }
 
     private static BatchSettings CreateNewSettings() => new() { SaveAfterRun = false };
@@ -401,6 +502,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         _canRun = false;
         _lastRun = null;
+        _completedRunProfileSnapshot = null;
+        IsResultsStale = false;
+        _profileEditWarningAcknowledged = false;
         SelectedQueueItem = null;
         Diagnostics.Clear();
         Queue.Clear();

@@ -9,6 +9,7 @@ try
     await VerifyPreflightAndControlledFailureAsync(workspace);
     await VerifyUsageAsync();
     VerifyReadOnlySaveDetection();
+    VerifySettingsChangeNotifications();
     Console.WriteLine("All BatchAcCore verification checks passed.");
     return 0;
 }
@@ -102,6 +103,18 @@ static void VerifyReadOnlySaveDetection()
     Assert(BatchRunner.ReportsReadOnlyDrawing("Warning: Drawing is read-only; changes will not be saved."), "A read-only drawing warning must be detected.");
     Assert(BatchRunner.ReportsReadOnlyDrawing("READ ONLY DWG FILE cannot be saved."), "A read-only DWG warning must be detected regardless of case.");
     Assert(!BatchRunner.ReportsReadOnlyDrawing("The report contains a read-only field."), "Unrelated read-only text must not be treated as a drawing save warning.");
+}
+
+static void VerifySettingsChangeNotifications()
+{
+    var settings = new BatchSettings();
+    var changedProperties = new List<string?>();
+    settings.PropertyChanged += (_, eventArgs) => changedProperties.Add(eventArgs.PropertyName);
+
+    settings.CreateLogFiles = false;
+    settings.TimeoutMinutes = 45;
+
+    Assert(changedProperties.SequenceEqual([nameof(BatchSettings.CreateLogFiles), nameof(BatchSettings.TimeoutMinutes)]), "Batch settings must report profile edits so the GUI can identify stale results.");
 }
 
 static void Assert(bool condition, string message)

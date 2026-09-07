@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -570,22 +572,45 @@ public static class BatchRunner
     }
 }
 
-public sealed class BatchSettings
+public sealed class BatchSettings : INotifyPropertyChanged
 {
-    public string? AcCoreConsolePath { get; set; }
-    public string? LispFilePath { get; set; }
+    private string? _acCoreConsolePath;
+    private string? _lispFilePath;
+    private string? _fileListPath;
+    private bool _skipInvalidFileListEntries;
+    private string? _inputDirectory;
+    private bool _recursive;
+    private int _workerCount = Math.Max(1, Environment.ProcessorCount / 2);
+    private int _timeoutMinutes = 30;
+    private bool _saveAfterRun = true;
+    private bool _keepScripts;
+    private bool _createLogFiles = true;
+    private string? _workDirectory;
+    private string? _combinedCsvOutputDirectory;
+
+    public string? AcCoreConsolePath { get => _acCoreConsolePath; set => SetField(ref _acCoreConsolePath, value); }
+    public string? LispFilePath { get => _lispFilePath; set => SetField(ref _lispFilePath, value); }
     internal string RoutineFunction { get; private set; } = string.Empty;
-    public string? FileListPath { get; set; }
-    public bool SkipInvalidFileListEntries { get; set; }
-    public string? InputDirectory { get; set; }
-    public bool Recursive { get; set; }
-    public int WorkerCount { get; set; } = Math.Max(1, Environment.ProcessorCount / 2);
-    public int TimeoutMinutes { get; set; } = 30;
-    public bool SaveAfterRun { get; set; } = true;
-    public bool KeepScripts { get; set; }
-    public bool CreateLogFiles { get; set; } = true;
-    public string? WorkDirectory { get; set; }
-    public string? CombinedCsvOutputDirectory { get; set; }
+    public string? FileListPath { get => _fileListPath; set => SetField(ref _fileListPath, value); }
+    public bool SkipInvalidFileListEntries { get => _skipInvalidFileListEntries; set => SetField(ref _skipInvalidFileListEntries, value); }
+    public string? InputDirectory { get => _inputDirectory; set => SetField(ref _inputDirectory, value); }
+    public bool Recursive { get => _recursive; set => SetField(ref _recursive, value); }
+    public int WorkerCount { get => _workerCount; set => SetField(ref _workerCount, value); }
+    public int TimeoutMinutes { get => _timeoutMinutes; set => SetField(ref _timeoutMinutes, value); }
+    public bool SaveAfterRun { get => _saveAfterRun; set => SetField(ref _saveAfterRun, value); }
+    public bool KeepScripts { get => _keepScripts; set => SetField(ref _keepScripts, value); }
+    public bool CreateLogFiles { get => _createLogFiles; set => SetField(ref _createLogFiles, value); }
+    public string? WorkDirectory { get => _workDirectory; set => SetField(ref _workDirectory, value); }
+    public string? CombinedCsvOutputDirectory { get => _combinedCsvOutputDirectory; set => SetField(ref _combinedCsvOutputDirectory, value); }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return;
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
 
     public void Normalize(string baseDirectory)
     {

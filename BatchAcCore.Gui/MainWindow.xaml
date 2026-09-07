@@ -2,25 +2,73 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Batch AcCoreConsole" Height="840" Width="1180" MinHeight="650" MinWidth="900">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.ControlBrushKey}}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="2"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter Margin="{TemplateBinding Padding}"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              RecognizesAccessKey="True" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="{DynamicResource {x:Static SystemColors.ControlLightBrushKey}}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}" />
+                                <Setter TargetName="ButtonBorder" Property="BorderThickness" Value="2" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+                                <Setter TargetName="ButtonBorder" Property="BorderThickness" Value="2" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.55" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
+            <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.HighlightTextBrushKey}}" />
+        </Style>
+    </Window.Resources>
     <DockPanel Margin="16">
         <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,12">
-            <Button Content="Reset profile" Click="NewProfile_Click" Padding="12,5" Margin="0,0,8,0" IsEnabled="{Binding CanEdit}" />
-            <Button Content="Open profile" Click="OpenProfile_Click" Padding="12,5" Margin="0,0,8,0" />
-            <Button Content="Save profile" Click="SaveProfile_Click" Padding="12,5" Margin="0,0,8,0" />
-            <Button Content="Save profile as..." Click="SaveProfileAs_Click" Padding="12,5" Margin="0,0,24,0" />
-            <Button Content="Run preflight" Click="RunPreflight_Click" Padding="12,5" Margin="0,0,8,0" IsEnabled="{Binding CanEdit}" />
-            <Button Content="Start batch" Click="StartBatch_Click" Padding="12,5" Margin="0,0,8,0" IsEnabled="{Binding CanStart}" />
-            <Button Content="Create failed-only rerun" Click="CreateRerun_Click" Padding="12,5" Margin="0,0,8,0" IsEnabled="{Binding CanCreateRerun}" />
-            <Button Content="Open selected log" Click="OpenSelectedLog_Click" Padding="12,5" Margin="0,0,8,0" IsEnabled="{Binding CanOpenSelectedLog}" />
-            <Button Content="Open batch summary" Click="OpenBatchSummary_Click" Padding="12,5" Margin="0,0,8,0" IsEnabled="{Binding CanOpenBatchSummary}" />
-            <Button Content="Open combined CSV" Click="OpenCombinedCsv_Click" Padding="12,5" Margin="0,0,8,0" IsEnabled="{Binding CanOpenCombinedCsv}" />
-            <Button Content="Cancel queued work" Click="Cancel_Click" Padding="12,5" IsEnabled="{Binding IsRunning}" />
+            <Button Content="Reset Profile" Click="NewProfile_Click" Padding="12,5" Margin="0,0,8,6" IsEnabled="{Binding CanEdit}" />
+            <Button Content="Open Profile" Click="OpenProfile_Click" Padding="12,5" Margin="0,0,8,6" />
+            <Button Content="Save Profile" Click="SaveProfile_Click" Padding="12,5" Margin="0,0,8,6" />
+            <Button Content="Save Profile As..." Click="SaveProfileAs_Click" Padding="12,5" Margin="0,0,24,6" />
+            <Button Content="Run Preflight" Click="RunPreflight_Click" Padding="12,5" Margin="0,0,8,6" IsEnabled="{Binding CanEdit}" />
+            <Button Content="Start Batch" Click="StartBatch_Click" Padding="12,5" Margin="0,0,8,6" IsEnabled="{Binding CanStart}" Style="{StaticResource PrimaryButton}" />
+            <Button Content="Create Failed-Only Rerun" Click="CreateRerun_Click" Padding="12,5" Margin="0,0,8,6" IsEnabled="{Binding CanCreateRerun}" />
+            <Button Content="Open Selected Log" Click="OpenSelectedLog_Click" Padding="12,5" Margin="0,0,8,6" IsEnabled="{Binding CanOpenSelectedLog}" />
+            <Button Content="Open Batch Summary" Click="OpenBatchSummary_Click" Padding="12,5" Margin="0,0,8,6" IsEnabled="{Binding CanOpenBatchSummary}" />
+            <Button Content="Open Combined CSV" Click="OpenCombinedCsv_Click" Padding="12,5" Margin="0,0,8,6" IsEnabled="{Binding CanOpenCombinedCsv}" />
+            <Button Content="Cancel Queued Work" Click="Cancel_Click" Padding="12,5" Margin="0,0,0,6" IsEnabled="{Binding IsRunning}" />
         </WrapPanel>
 
         <TabControl>
             <TabItem Header="Profile">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <Grid Margin="8" IsEnabled="{Binding CanEdit}">
+                    <Grid Margin="8" IsEnabled="{Binding CanEdit}" PreviewGotKeyboardFocus="ProfileEditor_PreviewGotKeyboardFocus">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="220" />
                             <ColumnDefinition Width="*" />
@@ -57,7 +105,7 @@
                 </ScrollViewer>
             </TabItem>
 
-            <TabItem Header="Preflight and queue">
+            <TabItem x:Name="PreflightQueueTab" Header="Preflight &amp; Queue">
                 <Grid Margin="8">
                     <Grid.RowDefinitions><RowDefinition Height="2*" /><RowDefinition Height="3*" /></Grid.RowDefinitions>
                     <DataGrid ItemsSource="{Binding Diagnostics}" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False" Margin="0,0,0,8">
@@ -85,8 +133,20 @@
                 </Grid>
             </TabItem>
 
-            <TabItem Header="Run output">
+            <TabItem Header="{Binding RunOutputHeader}">
                 <DockPanel Margin="8">
+                    <TextBlock DockPanel.Dock="Top" Text="Profile modified — displayed results are from the previous run." Foreground="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" FontWeight="SemiBold" Margin="0,0,0,8">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsResultsStale}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                     <TextBlock DockPanel.Dock="Top" Text="{Binding RunSummary}" FontWeight="SemiBold" Margin="0,0,0,8" />
                     <TextBox Text="{Binding OutputText, Mode=OneWay}" IsReadOnly="True" FontFamily="Consolas" TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" />
                 </DockPanel>
