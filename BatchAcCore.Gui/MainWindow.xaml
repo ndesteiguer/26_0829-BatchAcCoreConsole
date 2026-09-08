@@ -72,7 +72,7 @@
                 <TextBlock Text="{Binding ProgressText}" />
             </StatusBarItem>
             <StatusBarItem>
-                <ProgressBar Width="240" Height="14" Minimum="0" Maximum="{Binding ProgressMaximum}" Value="{Binding ProgressValue}" />
+                <ProgressBar Width="240" Height="14" Minimum="0" Maximum="{Binding ProgressMaximum}" Value="{Binding ProgressValue, Mode=OneWay}" />
             </StatusBarItem>
         </StatusBar>
 
