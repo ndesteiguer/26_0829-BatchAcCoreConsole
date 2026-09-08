@@ -7,6 +7,7 @@ Directory.CreateDirectory(workspace);
 try
 {
     await VerifyPreflightAndControlledFailureAsync(workspace);
+    VerifyLispLoadFailureHandling(workspace);
     await VerifyDuplicateCsvOutputHandlingAsync(workspace);
     await VerifyUsageAsync();
     VerifyReadOnlySaveDetection();
@@ -98,6 +99,22 @@ static async Task VerifyUsageAsync()
     var exitCode = await BatchRunner.RunAsync(["--help"], output);
     Assert(exitCode == 0, "The CLI help invocation must retain exit code 0.");
     Assert(output.Lines.Any(message => message.StartsWith("Usage:", StringComparison.Ordinal)), "The CLI usage line must be retained.");
+}
+
+static void VerifyLispLoadFailureHandling(string workspace)
+{
+    var settings = new BatchSettings
+    {
+        LispFilePath = Path.Combine(workspace, "REFREPORTCSV.lsp"),
+        WorkDirectory = Path.Combine(workspace, "work")
+    };
+    var markerPath = Path.Combine(workspace, "load-failure.result");
+    var script = BatchRunner.BuildScript(settings, markerPath);
+
+    Assert(script.Contains("(setq *error* __batchLoadError)", StringComparison.Ordinal), "The launcher must install an error handler before loading the LISP.");
+    Assert(script.Contains("(defun __batchLoadError (message)", StringComparison.Ordinal), "The launcher must define a load-specific error handler.");
+    Assert(script.Contains("(__batchWriteMarker \"Lisp routine failed to load.\")", StringComparison.Ordinal), "A load-time AutoLISP error must write the standard load-failure marker.");
+    Assert(script.Contains("(setq *error* __batchOriginalError)\n    (", StringComparison.Ordinal), "The launcher must restore normal error handling before invoking the routine.");
 }
 
 static async Task VerifyDuplicateCsvOutputHandlingAsync(string workspace)
