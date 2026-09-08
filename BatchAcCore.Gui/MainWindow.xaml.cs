@@ -533,12 +533,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (IsRunning)
         {
             StatusText = _cancellation?.IsCancellationRequested == true
-                ? $"Cancelling: {ProgressText} · {running} active"
-                : $"Running: {ProgressText} · {running} active";
+                ? $"Cancelling: {running} active"
+                : $"Running: {running} active";
             return;
         }
 
-        StatusText = "Batch complete: " + ProgressText;
+        var succeeded = Queue.Count(item => item.Status == "Succeeded");
+        var skippedOrCancelled = Queue.Count(item => item.Status is "Skipped" or "Cancelled");
+        var failed = Queue.Count(item => item.Status is "Failed" or "TimedOut");
+        StatusText = $"{succeeded} complete, {skippedOrCancelled} skipped or cancelled, {failed} failed";
     }
 
     private void SetProgress(int value, int total)
