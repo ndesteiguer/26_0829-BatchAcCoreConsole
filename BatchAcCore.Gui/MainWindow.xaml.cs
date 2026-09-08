@@ -22,13 +22,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _isRunning;
     private string _outputText = string.Empty;
     private string _runSummary = "Open or create a profile, then run preflight before starting a batch.";
+    private string _statusText = "Ready";
+    private int _progressTotal;
+    private int _progressValue;
     private CancellationTokenSource? _cancellation;
     private BatchRunResult? _lastRun;
     private QueueItem? _selectedQueueItem;
     private string? _completedRunProfileSnapshot;
     private bool _isResultsStale;
-    private bool _profileEditWarningAcknowledged;
-    private bool _revertingProfileEdit;
+    private bool _failedRerunPromptDismissed;
 
     public MainWindow()
     {
@@ -126,6 +128,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         private set => SetField(ref _runSummary, value);
     }
 
+    public string StatusText
+    {
+        get => _statusText;
+        private set => SetField(ref _statusText, value);
+    }
+
+    public int ProgressMaximum => Math.Max(1, _progressTotal);
+    public int ProgressValue
+    {
+        get => _progressValue;
+        private set => SetField(ref _progressValue, value);
+    }
+
+    public string ProgressText => _progressTotal == 0 ? "No batch queued" : $"{ProgressValue} / {_progressTotal} complete";
+
     public bool IsResultsStale
     {
         get => _isResultsStale;
@@ -197,14 +214,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void BrowseWorkDirectory_Click(object sender, RoutedEventArgs e) =>
         ChooseFolder(path => Settings.WorkDirectory = path);
 
-    private void BrowseCombinedDirectory_Click(object sender, RoutedEventArgs e) =>
-        ChooseFolder(path => Settings.CombinedCsvOutputDirectory = path);
+    private void BrowseResultsDirectory_Click(object sender, RoutedEventArgs e) =>
+        ChooseFolder(path => Settings.ResultsDirectory = path);
 
     private void OpenSelectedLog_Click(object sender, RoutedEventArgs e) => OpenArtifact(SelectedQueueItem?.LogPath, "job log");
     private void OpenBatchSummary_Click(object sender, RoutedEventArgs e) => OpenArtifact(_lastRun?.ReadableSummaryPath, "batch summary");
     private void OpenCombinedCsv_Click(object sender, RoutedEventArgs e) => OpenArtifact(_lastRun?.CombinedCsvPath, "combined CSV");
 
-    private void CreateRerun_Click(object sender, RoutedEventArgs e)
+    private void CreateRerun_Click(object sender, RoutedEventArgs e) => CreateFailedOnlyRerun();
+
+    private bool CreateFailedOnlyRerun()
     {
         var drawings = _lastRun?.Jobs
             .Where(job => job.Status is "Failed" or "TimedOut" or "Cancelled")
@@ -212,7 +231,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray() ?? [];
-        if (drawings.Length == 0) return;
+        if (drawings.Length == 0) return false;
 
         var dialog = new SaveFileDialog
         {
@@ -220,14 +239,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             DefaultExt = ".json",
             FileName = "failed-rerun.json"
         };
-        if (dialog.ShowDialog(this) != true) return;
+        if (dialog.ShowDialog(this) != true) return false;
 
         var drawingListPath = Path.Combine(
             Path.GetDirectoryName(dialog.FileName)!,
             Path.GetFileNameWithoutExtension(dialog.FileName) + ".rerun.drawings.txt");
         if (File.Exists(drawingListPath) &&
             MessageBox.Show(this, "The companion drawing-list file already exists. Replace it?", Title, MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
-            return;
+            return false;
 
         try
         {
@@ -243,10 +262,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ClearRunState();
             RunPreflight();
             RunSummary = "Created a separate failed-only rerun profile and drawing list. The original profile was not changed.";
+            return true;
         }
         catch (Exception exception)
         {
             MessageBox.Show(this, "Could not create the rerun profile.\n\n" + exception.Message, Title, MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
         }
     }
 
@@ -264,7 +285,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _lastRun = null;
         _completedRunProfileSnapshot = null;
         IsResultsStale = false;
-        _profileEditWarningAcknowledged = false;
+        _failedRerunPromptDismissed = false;
         OnPropertyChanged(nameof(CanCreateRerun));
         OnPropertyChanged(nameof(CanOpenBatchSummary));
         OnPropertyChanged(nameof(CanOpenCombinedCsv));
@@ -272,6 +293,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OutputText = string.Empty;
         _cancellation = new CancellationTokenSource();
         RunSummary = "Batch is starting. Cancelling stops queued jobs; active Core Console jobs finish normally.";
+        StatusText = "Starting batch...";
+        SetProgress(0, Queue.Count);
         var output = new GuiBatchOutput(AppendOutput);
         var progress = new Progress<BatchProgressEvent>(HandleProgress);
 
@@ -280,7 +303,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _lastRun = await BatchRunner.RunWithResultAsync([_profilePath!], output, progress, _cancellation.Token);
             _completedRunProfileSnapshot = SerializeSettings();
             IsResultsStale = false;
-            _profileEditWarningAcknowledged = false;
+            _failedRerunPromptDismissed = false;
             OnPropertyChanged(nameof(CanCreateRerun));
             OnPropertyChanged(nameof(CanOpenBatchSummary));
             OnPropertyChanged(nameof(CanOpenCombinedCsv));
@@ -290,12 +313,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             AppendOutput("Unexpected GUI error: " + exception);
             RunSummary = "Batch ended with an unexpected GUI error.";
+            StatusText = "Batch ended with an unexpected error.";
         }
         finally
         {
             _cancellation.Dispose();
             _cancellation = null;
             IsRunning = false;
+            if (_lastRun is not null) UpdateBatchProgressStatus();
         }
     }
 
@@ -303,6 +328,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         _cancellation?.Cancel();
         RunSummary = "Cancellation requested. No new jobs will start; active Core Console jobs will finish normally.";
+        StatusText = "Cancelling queued work; active jobs will finish.";
     }
 
     private bool RunPreflight()
@@ -315,12 +341,27 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Queue.Clear();
         var inputSource = string.IsNullOrWhiteSpace(Settings.FileListPath) ? "Input directory" : "Drawing list";
         foreach (var drawing in report.Drawings) Queue.Add(new QueueItem(drawing, inputSource));
+        foreach (var duplicate in report.OmittedDrawings)
+        {
+            var item = new QueueItem(duplicate.Drawing, inputSource)
+            {
+                Status = "Skipped",
+                Message = $"Skipped because its derived CSV output duplicates {duplicate.RetainedDrawing}."
+            };
+            Queue.Add(item);
+        }
 
         _canRun = report.CanRun;
         OnPropertyChanged(nameof(CanStart));
         RunSummary = report.CanRun
             ? "Preflight passed. " + report.Drawings.Count + " drawing(s) are ready for review."
             : "Preflight found one or more errors. Resolve them before starting the batch.";
+        SetProgress(0, Queue.Count);
+        StatusText = !report.CanRun
+            ? "Preflight failed"
+            : report.Diagnostics.Any(diagnostic => diagnostic.Severity == PreflightSeverity.Warning)
+                ? "Preflight passed (with warnings)"
+                : "Preflight passed";
         return report.CanRun;
     }
 
@@ -357,18 +398,22 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private bool ConfirmProfileEdit()
     {
-        if (_profileEditWarningAcknowledged || !HasFailedOnlyRerunAvailable()) return true;
+        if (_failedRerunPromptDismissed || !HasFailedOnlyRerunAvailable()) return true;
 
         var result = MessageBox.Show(
             this,
-            "This completed run has failed, timed-out, or cancelled drawings that can be used to create a failed-only rerun. Editing the profile will mark these results as from a previous run and disable that rerun option.\n\nCreate the failed-only rerun now, or continue editing?",
+            "The completed run has failed, timed-out, or cancelled files.\n\nDo you want to create a Failed-Only Rerun now?",
             Title,
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning,
             MessageBoxResult.No);
-        if (result != MessageBoxResult.Yes) return false;
+        if (result == MessageBoxResult.Yes)
+        {
+            CreateFailedOnlyRerun();
+            return false;
+        }
 
-        _profileEditWarningAcknowledged = true;
+        _failedRerunPromptDismissed = true;
         return true;
     }
 
@@ -380,40 +425,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void Settings_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         OnPropertyChanged(nameof(Settings));
-        if (_revertingProfileEdit || _lastRun is null || IsRunning) return;
+        if (_lastRun is null || IsRunning) return;
 
         var differsFromCompletedRun = !string.Equals(_completedRunProfileSnapshot, SerializeSettings(), StringComparison.Ordinal);
-        if (differsFromCompletedRun && !_profileEditWarningAcknowledged && HasFailedOnlyRerunAvailable() && !ConfirmProfileEdit())
-        {
-            RestoreCompletedRunSettings();
-            return;
-        }
+        if (differsFromCompletedRun && !_failedRerunPromptDismissed && HasFailedOnlyRerunAvailable() && !ConfirmProfileEdit()) return;
 
         IsResultsStale = differsFromCompletedRun;
     }
 
     private string SerializeSettings() => JsonSerializer.Serialize(Settings, ProfileJsonOptions);
 
-    private void RestoreCompletedRunSettings()
-    {
-        if (string.IsNullOrWhiteSpace(_completedRunProfileSnapshot)) return;
-
-        var restoredSettings = JsonSerializer.Deserialize<BatchSettings>(_completedRunProfileSnapshot);
-        if (restoredSettings is null) return;
-
-        _revertingProfileEdit = true;
-        try
-        {
-            Settings = restoredSettings;
-            IsResultsStale = false;
-        }
-        finally
-        {
-            _revertingProfileEdit = false;
-        }
-    }
-
-    private static BatchSettings CreateNewSettings() => new() { SaveAfterRun = false };
+    private static BatchSettings CreateNewSettings() => new();
 
     private void OpenArtifact(string? path, string description)
     {
@@ -474,6 +496,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         if (progress.Kind == BatchEventKind.Warning && progress.Message is not null) AppendOutput("Warning: " + progress.Message);
         if (progress.Kind == BatchEventKind.BatchCompleted) RunSummary = "Batch is finishing. " + BuildQueueSummary();
+        if (progress.Kind is BatchEventKind.BatchStarted or BatchEventKind.JobStarted or BatchEventKind.JobCompleted or BatchEventKind.BatchCompleted)
+            UpdateBatchProgressStatus();
     }
 
     private void AppendOutput(string message)
@@ -498,17 +522,46 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return "Succeeded: " + succeeded + "; failed: " + failed + "; skipped: " + skipped + "; cancelled: " + cancelled + "; running: " + running + "; queued: " + queued + ".";
     }
 
+    private void UpdateBatchProgressStatus()
+    {
+        var total = Queue.Count;
+        var completed = Queue.Count(item => item.Status is "Succeeded" or "Failed" or "Skipped" or "Cancelled");
+        var running = Queue.Count(item => item.Status == "Running");
+        SetProgress(completed, total);
+
+        if (total == 0) return;
+        if (IsRunning)
+        {
+            StatusText = _cancellation?.IsCancellationRequested == true
+                ? $"Cancelling: {ProgressText} · {running} active"
+                : $"Running: {ProgressText} · {running} active";
+            return;
+        }
+
+        StatusText = "Batch complete: " + ProgressText;
+    }
+
+    private void SetProgress(int value, int total)
+    {
+        _progressTotal = total;
+        ProgressValue = Math.Clamp(value, 0, Math.Max(total, 1));
+        OnPropertyChanged(nameof(ProgressMaximum));
+        OnPropertyChanged(nameof(ProgressText));
+    }
+
     private void ClearRunState()
     {
         _canRun = false;
         _lastRun = null;
         _completedRunProfileSnapshot = null;
         IsResultsStale = false;
-        _profileEditWarningAcknowledged = false;
+        _failedRerunPromptDismissed = false;
         SelectedQueueItem = null;
         Diagnostics.Clear();
         Queue.Clear();
         OutputText = string.Empty;
+        SetProgress(0, 0);
+        StatusText = "Ready";
         OnPropertyChanged(nameof(CanStart));
         OnPropertyChanged(nameof(CanCreateRerun));
         OnPropertyChanged(nameof(CanOpenSelectedLog));

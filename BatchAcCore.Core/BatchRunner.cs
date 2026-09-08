@@ -81,30 +81,40 @@ public static class BatchRunner
         try { settings.Normalize(baseDirectory); }
         catch (Exception exception) { return Fail(output, exception.Message); }
 
-        string[] drawings;
+        string[] discoveredDrawings;
         try
         {
-            drawings = DiscoverDrawings(settings).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            discoveredDrawings = DiscoverDrawings(settings).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         }
         catch (ArgumentException exception)
         {
             return Fail(output, exception.Message);
         }
-        if (drawings.Length == 0) return Fail(output, "No DWG files were found.");
+        if (discoveredDrawings.Length == 0) return Fail(output, "No DWG files were found.");
+        var selection = SelectDrawingsForUniqueCsvOutputs(settings.WorkDirectory!, discoveredDrawings, settings.RoutineFunction);
+        var drawings = selection.Drawings;
         var expectedCsvFiles = GetExpectedCsvFiles(settings.WorkDirectory!, drawings, settings.RoutineFunction);
-        if (expectedCsvFiles.Count != drawings.Length)
-            return Fail(output, "Each drawing must have a unique filename because CSV output names are derived from the drawing filename and LISP function name.");
 
         Directory.CreateDirectory(settings.WorkDirectory!);
         var isolateRoot = Path.Combine(Path.GetTempPath(), $"BatchAcCoreConsole-{Guid.NewGuid():N}");
         var csvFilesBeforeBatch = SnapshotCsvFiles(settings.WorkDirectory!);
-        output.WriteLine($"Queued {drawings.Length} drawing(s), using {settings.WorkerCount} worker(s).");
+        output.WriteLine($"Queued {drawings.Count} drawing(s), using {settings.WorkerCount} worker(s).");
+        if (selection.OmittedDrawings.Count > 0)
+            output.WriteLine($"Skipped {selection.OmittedDrawings.Count} drawing(s) with duplicate derived CSV output filenames.");
         output.WriteLine($"Work directory: {settings.WorkDirectory}");
-        Report(progress, BatchEventKind.BatchStarted, message: $"Queued {drawings.Length} drawing(s).");
+        Report(progress, BatchEventKind.BatchStarted, message: $"Queued {drawings.Count} drawing(s); {selection.OmittedDrawings.Count} duplicate-output drawing(s) skipped.");
         foreach (var drawing in drawings)
             Report(progress, BatchEventKind.JobQueued, drawing: drawing, status: "Queued");
 
         var results = new ConcurrentBag<JobResult>();
+        foreach (var duplicate in selection.OmittedDrawings)
+        {
+            var skippedAt = DateTimeOffset.UtcNow;
+            var reason = $"Skipped because its derived CSV output '{Path.GetFileName(duplicate.ExpectedCsvPath)}' duplicates {duplicate.RetainedDrawing}.";
+            var skippedResult = new JobResult(duplicate.Drawing, "Skipped", null, skippedAt, skippedAt, null, reason);
+            results.Add(skippedResult);
+            Report(progress, BatchEventKind.JobCompleted, duplicate.Drawing, status: "Skipped", message: reason, result: skippedResult);
+        }
         var pendingDrawings = new ConcurrentQueue<string>(drawings);
         var lispLoadFailureDetected = 0;
         var workers = Enumerable.Range(1, settings.WorkerCount).Select(async workerId =>
@@ -164,6 +174,8 @@ public static class BatchRunner
         string? combinedCsvPath = null;
         string? combinationError = null;
         var issues = new List<string>();
+        if (selection.OmittedDrawings.Count > 0)
+            issues.Add($"{selection.OmittedDrawings.Count} drawing(s) were skipped because their derived CSV output filenames duplicate an earlier input. See Skipped drawings for details.");
         if (Volatile.Read(ref lispLoadFailureDetected) != 0)
         {
             const string issue = "CSV combination skipped because the LISP routine failed to load.";
@@ -185,7 +197,7 @@ public static class BatchRunner
 
             try
             {
-                combinedCsvPath = await CombineCsvFilesAsync(settings.CombinedCsvOutputDirectory!, batchCsvFiles);
+                combinedCsvPath = await CombineCsvFilesAsync(settings.ResultsDirectory!, batchCsvFiles);
                 output.WriteLine($"Combined CSV: {combinedCsvPath}");
             }
             catch (Exception exception)
@@ -199,11 +211,11 @@ public static class BatchRunner
 
         var summaryPath = Path.Combine(settings.WorkDirectory!, $"summary-{DateTime.UtcNow:yyyyMMddHHmmssfff}.json");
         await File.WriteAllTextAsync(summaryPath, JsonSerializer.Serialize(ordered, JsonOptions));
-        var readableSummaryCandidate = Path.Combine(settings.CombinedCsvOutputDirectory!, $"batch-summary-{DateTime.UtcNow:yyyyMMddHHmmssfff}.txt");
+        var readableSummaryCandidate = Path.Combine(settings.ResultsDirectory!, $"batch-summary-{DateTime.UtcNow:yyyyMMddHHmmssfff}.txt");
         string? readableSummaryPath = null;
         try
         {
-            Directory.CreateDirectory(settings.CombinedCsvOutputDirectory!);
+            Directory.CreateDirectory(settings.ResultsDirectory!);
             await File.WriteAllTextAsync(readableSummaryCandidate, BuildReadableSummary(settings, ordered, succeeded, failed, skipped, cancelled, elapsedRuntime, combinedCsvPath, issues, summaryPath));
             readableSummaryPath = readableSummaryCandidate;
             output.WriteLine($"Batch summary: {readableSummaryPath}");
@@ -218,7 +230,7 @@ public static class BatchRunner
             : $"Finished: {succeeded} succeeded, {failed} failed, {skipped} skipped, {cancelled} cancelled. Summary: {summaryPath}";
         output.WriteLine(completionMessage);
         Report(progress, BatchEventKind.BatchCompleted, status: cancelled > 0 ? "Cancelled" : "Completed", message: $"{succeeded} succeeded, {failed} failed, {skipped} skipped, {cancelled} cancelled.");
-        var exitCode = succeeded == ordered.Length && combinationError is null ? 0 : 1;
+        var exitCode = failed == 0 && cancelled == 0 && Volatile.Read(ref lispLoadFailureDetected) == 0 && combinationError is null ? 0 : 1;
         return new(exitCode, ordered, summaryPath, readableSummaryPath, combinedCsvPath, issues, cancelled > 0);
     }
 
@@ -354,6 +366,28 @@ public static class BatchRunner
         .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
         .ToArray();
 
+    internal static DrawingSelection SelectDrawingsForUniqueCsvOutputs(string workDirectory, IEnumerable<string> drawings, string routineFunction)
+    {
+        var selected = new List<string>();
+        var omitted = new List<DuplicateCsvOutput>();
+        var retainedByCsvOutput = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var drawing in drawings)
+        {
+            var expectedCsvPath = Path.Combine(workDirectory, $"{Path.GetFileNameWithoutExtension(drawing)}.{routineFunction}.csv");
+            if (retainedByCsvOutput.TryGetValue(expectedCsvPath, out var retainedDrawing))
+            {
+                omitted.Add(new(drawing, retainedDrawing, expectedCsvPath));
+                continue;
+            }
+
+            retainedByCsvOutput.Add(expectedCsvPath, drawing);
+            selected.Add(drawing);
+        }
+
+        return new(selected, omitted);
+    }
+
     private static IEnumerable<string> GetBatchCsvFiles(IReadOnlyList<string> expectedCsvFiles, IReadOnlyDictionary<string, CsvFileStamp> beforeBatch) => expectedCsvFiles
         .Where(File.Exists)
         .Where(path => !beforeBatch.TryGetValue(path, out var priorStamp) || priorStamp != GetCsvFileStamp(path));
@@ -467,7 +501,8 @@ public static class BatchRunner
         }
         if (!string.IsNullOrWhiteSpace(settings.InputDirectory))
         {
-            foreach (var path in Directory.EnumerateFiles(settings.InputDirectory!, "*.dwg", settings.Recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly))
+            foreach (var path in Directory.EnumerateFiles(settings.InputDirectory!, "*.dwg", settings.Recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
                 drawings.Add(path);
         }
         return drawings;
@@ -509,9 +544,9 @@ public static class BatchRunner
         summary.AppendLine($"- Timeout: {settings.TimeoutMinutes} minute(s)");
         summary.AppendLine($"- Save drawings after processing: {settings.SaveAfterRun}");
         summary.AppendLine($"- Keep generated scripts: {settings.KeepScripts}");
-        summary.AppendLine($"- Create per-drawing log files: {settings.CreateLogFiles}");
+        summary.AppendLine($"- Create per-job log files: {settings.CreateLogFiles}");
         summary.AppendLine($"- Work directory: {settings.WorkDirectory}");
-        summary.AppendLine($"- Combined output directory: {settings.CombinedCsvOutputDirectory}");
+        summary.AppendLine($"- Results directory: {settings.ResultsDirectory}");
 
         summary.AppendLine();
         summary.AppendLine($"Batch issues ({issues.Count}):");
@@ -574,19 +609,19 @@ public static class BatchRunner
 
 public sealed class BatchSettings : INotifyPropertyChanged
 {
-    private string? _acCoreConsolePath;
+    private string? _acCoreConsolePath = @"C:\Program Files\Autodesk\AutoCAD 2026\accoreconsole.exe";
     private string? _lispFilePath;
     private string? _fileListPath;
     private bool _skipInvalidFileListEntries;
     private string? _inputDirectory;
     private bool _recursive;
-    private int _workerCount = Math.Max(1, Environment.ProcessorCount / 2);
-    private int _timeoutMinutes = 30;
-    private bool _saveAfterRun = true;
+    private int _workerCount = 4;
+    private int _timeoutMinutes = 10;
+    private bool _saveAfterRun;
     private bool _keepScripts;
     private bool _createLogFiles = true;
     private string? _workDirectory;
-    private string? _combinedCsvOutputDirectory;
+    private string? _resultsDirectory;
 
     public string? AcCoreConsolePath { get => _acCoreConsolePath; set => SetField(ref _acCoreConsolePath, value); }
     public string? LispFilePath { get => _lispFilePath; set => SetField(ref _lispFilePath, value); }
@@ -601,7 +636,7 @@ public sealed class BatchSettings : INotifyPropertyChanged
     public bool KeepScripts { get => _keepScripts; set => SetField(ref _keepScripts, value); }
     public bool CreateLogFiles { get => _createLogFiles; set => SetField(ref _createLogFiles, value); }
     public string? WorkDirectory { get => _workDirectory; set => SetField(ref _workDirectory, value); }
-    public string? CombinedCsvOutputDirectory { get => _combinedCsvOutputDirectory; set => SetField(ref _combinedCsvOutputDirectory, value); }
+    public string? ResultsDirectory { get => _resultsDirectory; set => SetField(ref _resultsDirectory, value); }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -633,9 +668,9 @@ public sealed class BatchSettings : INotifyPropertyChanged
         if (WorkerCount is < 1 or > 64) throw new ArgumentException("WorkerCount must be between 1 and 64.");
         if (TimeoutMinutes is < 1 or > 1440) throw new ArgumentException("TimeoutMinutes must be between 1 and 1440.");
         WorkDirectory = Resolve(string.IsNullOrWhiteSpace(WorkDirectory) ? "batch-work" : WorkDirectory, baseDirectory);
-        CombinedCsvOutputDirectory = Resolve(string.IsNullOrWhiteSpace(CombinedCsvOutputDirectory) ? "combined-output" : CombinedCsvOutputDirectory, baseDirectory);
-        if (string.Equals(WorkDirectory, CombinedCsvOutputDirectory, StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("CombinedCsvOutputDirectory must be different from WorkDirectory.");
+        ResultsDirectory = Resolve(string.IsNullOrWhiteSpace(ResultsDirectory) ? "results" : ResultsDirectory, baseDirectory);
+        if (string.Equals(WorkDirectory, ResultsDirectory, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("ResultsDirectory must be different from WorkDirectory.");
     }
 
     private static string RequiredFile(string? value, string name, string baseDirectory)
@@ -672,4 +707,5 @@ public sealed record BatchRunResult(
     string? CombinedCsvPath,
     IReadOnlyList<string> Issues,
     bool WasCancellationRequested);
+internal sealed record DrawingSelection(IReadOnlyList<string> Drawings, IReadOnlyList<DuplicateCsvOutput> OmittedDrawings);
 internal readonly record struct CsvFileStamp(long Length, DateTime LastWriteUtc);

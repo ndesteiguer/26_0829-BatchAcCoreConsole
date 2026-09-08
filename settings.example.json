@@ -4,10 +4,10 @@
   "FileListPath": "C:\\BatchJobs\\drawings.txt",
   "SkipInvalidFileListEntries": false,
   "WorkerCount": 4,
-  "TimeoutMinutes": 30,
-  "SaveAfterRun": true,
+  "TimeoutMinutes": 10,
+  "SaveAfterRun": false,
   "KeepScripts": false,
   "CreateLogFiles": true,
   "WorkDirectory": "C:\\BatchJobs\\work",
-  "CombinedCsvOutputDirectory": "C:\\BatchJobs\\combined"
+  "ResultsDirectory": "C:\\BatchJobs\\results"
 }

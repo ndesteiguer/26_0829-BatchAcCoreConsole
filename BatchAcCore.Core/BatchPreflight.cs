@@ -9,9 +9,12 @@ public enum PreflightSeverity
 
 public sealed record PreflightDiagnostic(PreflightSeverity Severity, string Check, string Message);
 
+public sealed record DuplicateCsvOutput(string Drawing, string RetainedDrawing, string ExpectedCsvPath);
+
 public sealed record BatchPreflightReport(
     BatchSettings? Settings,
     IReadOnlyList<string> Drawings,
+    IReadOnlyList<DuplicateCsvOutput> OmittedDrawings,
     IReadOnlyList<PreflightDiagnostic> Diagnostics)
 {
     public bool CanRun => Settings is not null && Diagnostics.All(diagnostic => diagnostic.Severity != PreflightSeverity.Error);
@@ -32,35 +35,41 @@ public static class BatchPreflight
         catch (Exception exception)
         {
             diagnostics.Add(new(PreflightSeverity.Error, GetValidationCheck(exception), exception.Message));
-            return new(null, [], diagnostics);
+            return new(null, [], [], diagnostics);
         }
 
-        string[] drawings;
+        string[] discoveredDrawings;
         try
         {
-            drawings = BatchRunner.DiscoverDrawings(settings)
+            discoveredDrawings = BatchRunner.DiscoverDrawings(settings)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
         }
         catch (ArgumentException exception)
         {
             diagnostics.Add(new(PreflightSeverity.Error, "Drawing input", exception.Message));
-            return new(settings, [], diagnostics);
+            return new(settings, [], [], diagnostics);
         }
 
-        if (drawings.Length == 0)
+        var selection = BatchRunner.SelectDrawingsForUniqueCsvOutputs(settings.WorkDirectory!, discoveredDrawings, settings.RoutineFunction);
+        var drawings = selection.Drawings;
+
+        if (discoveredDrawings.Length == 0)
             diagnostics.Add(new(PreflightSeverity.Error, "Drawing input", "No DWG files were found."));
         else
-            diagnostics.Add(new(PreflightSeverity.Pass, "Drawing input", $"Resolved {drawings.Length} drawing(s)."));
+            diagnostics.Add(new(PreflightSeverity.Pass, "Drawing input", $"Resolved {discoveredDrawings.Length} drawing(s); {drawings.Count} will be processed."));
 
-        var expectedCsvFiles = BatchRunner.GetExpectedCsvFiles(settings.WorkDirectory!, drawings, settings.RoutineFunction);
-        if (expectedCsvFiles.Count != drawings.Length)
-            diagnostics.Add(new(PreflightSeverity.Error, "CSV output", "Each drawing must have a unique filename because CSV output names are derived from the drawing filename and LISP function name."));
+        if (selection.OmittedDrawings.Count > 0)
+        {
+            var examples = string.Join(", ", selection.OmittedDrawings.Take(3).Select(duplicate => Path.GetFileName(duplicate.Drawing)));
+            var remainder = selection.OmittedDrawings.Count > 3 ? $" (and {selection.OmittedDrawings.Count - 3} more)" : string.Empty;
+            diagnostics.Add(new(PreflightSeverity.Warning, "CSV output", $"{selection.OmittedDrawings.Count} drawing(s) will be skipped because their derived CSV output filename duplicates an earlier input: {examples}{remainder}. The first resolved drawing for each output name will be processed."));
+        }
         else
             diagnostics.Add(new(PreflightSeverity.Pass, "CSV output", "Each drawing has a unique expected CSV output name."));
 
         ReportDirectory(diagnostics, "Work directory", settings.WorkDirectory!);
-        ReportDirectory(diagnostics, "Combined output directory", settings.CombinedCsvOutputDirectory!);
+        ReportDirectory(diagnostics, "Results directory", settings.ResultsDirectory!);
 
         if (settings.SaveAfterRun)
         {
@@ -70,7 +79,7 @@ public static class BatchPreflight
         if (UsesMappedDrive(settings))
             diagnostics.Add(new(PreflightSeverity.Warning, "Path portability", "A mapped drive is in use. Prefer a UNC path if Core Console runs under a different access context."));
 
-        return new(settings, drawings, diagnostics);
+        return new(settings, drawings, selection.OmittedDrawings, diagnostics);
     }
 
     private static string GetValidationCheck(Exception exception)
@@ -86,7 +95,7 @@ public static class BatchPreflight
             message.Contains("exactly one", StringComparison.OrdinalIgnoreCase))
             return "Drawing input";
         if (message.Contains("WorkDirectory", StringComparison.OrdinalIgnoreCase) ||
-            message.Contains("CombinedCsvOutputDirectory", StringComparison.OrdinalIgnoreCase))
+            message.Contains("ResultsDirectory", StringComparison.OrdinalIgnoreCase))
             return "Output directories";
         return "Execution settings";
     }
@@ -140,7 +149,7 @@ public static class BatchPreflight
     }
 
     private static bool UsesMappedDrive(BatchSettings settings) =>
-        new[] { settings.AcCoreConsolePath, settings.LispFilePath, settings.FileListPath, settings.InputDirectory, settings.WorkDirectory, settings.CombinedCsvOutputDirectory }
+        new[] { settings.AcCoreConsolePath, settings.LispFilePath, settings.FileListPath, settings.InputDirectory, settings.WorkDirectory, settings.ResultsDirectory }
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Any(IsNetworkDrive);
 

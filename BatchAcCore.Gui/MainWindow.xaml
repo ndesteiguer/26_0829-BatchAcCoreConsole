@@ -29,11 +29,9 @@
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="ButtonBorder" Property="Background" Value="{DynamicResource {x:Static SystemColors.ControlDarkBrushKey}}" />
-                                <Setter TargetName="ButtonBorder" Property="BorderThickness" Value="2" />
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" />
-                                <Setter TargetName="ButtonBorder" Property="BorderThickness" Value="2" />
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.55" />
@@ -65,6 +63,19 @@
             <Button Content="Cancel Queued Work" Click="Cancel_Click" Padding="12,5" Margin="0,0,0,6" IsEnabled="{Binding IsRunning}" />
         </WrapPanel>
 
+        <StatusBar DockPanel.Dock="Bottom" Margin="0,12,0,0">
+            <StatusBarItem>
+                <TextBlock Text="{Binding StatusText}" />
+            </StatusBarItem>
+            <Separator />
+            <StatusBarItem HorizontalAlignment="Right">
+                <TextBlock Text="{Binding ProgressText}" />
+            </StatusBarItem>
+            <StatusBarItem>
+                <ProgressBar Width="240" Height="14" Minimum="0" Maximum="{Binding ProgressMaximum}" Value="{Binding ProgressValue}" />
+            </StatusBarItem>
+        </StatusBar>
+
         <TabControl>
             <TabItem Header="Profile">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -91,8 +102,8 @@
                         <CheckBox Grid.Row="4" Grid.Column="1" Content="Search this input directory recursively" IsChecked="{Binding Settings.Recursive}" IsEnabled="{Binding IsInputDirectoryInput}" Margin="0,6" />
                         <TextBlock Grid.Row="5" Text="Work directory" VerticalAlignment="Center" Margin="0,6" />
                         <DockPanel Grid.Row="5" Grid.Column="1" Margin="0,3"><Button DockPanel.Dock="Right" Content="Browse..." Click="BrowseWorkDirectory_Click" Margin="8,0,0,0" /><TextBox Text="{Binding Settings.WorkDirectory, UpdateSourceTrigger=PropertyChanged}" /></DockPanel>
-                        <TextBlock Grid.Row="6" Text="Combined CSV directory" VerticalAlignment="Center" Margin="0,6" />
-                        <DockPanel Grid.Row="6" Grid.Column="1" Margin="0,3"><Button DockPanel.Dock="Right" Content="Browse..." Click="BrowseCombinedDirectory_Click" Margin="8,0,0,0" /><TextBox Text="{Binding Settings.CombinedCsvOutputDirectory, UpdateSourceTrigger=PropertyChanged}" /></DockPanel>
+                        <TextBlock Grid.Row="6" Text="Results directory" VerticalAlignment="Center" Margin="0,6" />
+                        <DockPanel Grid.Row="6" Grid.Column="1" Margin="0,3"><Button DockPanel.Dock="Right" Content="Browse..." Click="BrowseResultsDirectory_Click" Margin="8,0,0,0" /><TextBox Text="{Binding Settings.ResultsDirectory, UpdateSourceTrigger=PropertyChanged}" /></DockPanel>
                         <TextBlock Grid.Row="7" Text="Workers" VerticalAlignment="Center" Margin="0,6" />
                         <TextBox Grid.Row="7" Grid.Column="1" Text="{Binding Settings.WorkerCount, UpdateSourceTrigger=PropertyChanged}" Margin="0,3" Width="100" HorizontalAlignment="Left" />
                         <TextBlock Grid.Row="8" Text="Timeout (minutes)" VerticalAlignment="Center" Margin="0,6" />

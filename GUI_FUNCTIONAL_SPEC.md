@@ -17,7 +17,7 @@ Required profile choices:
 - `LispFunction`
 - exactly one input method: `FileListPath` or `InputDirectory`
 - `WorkDirectory`
-- `CombinedCsvOutputDirectory`
+- `ResultsDirectory`
 
 The GUI also exposes the existing optional execution settings: recursive discovery, invalid-entry handling, worker count, timeout, save-after-run, and retained scripts. File and folder selectors are convenience controls; paths remain editable text values so UNC paths and unusual installations are supported.
 
@@ -34,7 +34,7 @@ Required checks:
 | Exactly one input method is configured | Cannot run |
 | File-list entries or input-directory discovery produce drawings | Cannot run |
 | Each required drawing is accessible and is a `.dwg` file | Cannot run unless skip-invalid is enabled |
-| Work and combined-output directories are distinct and can be created/written | Cannot run |
+| Work and results directories are distinct and can be created/written | Cannot run |
 | Worker count and timeout are within supported bounds | Cannot run |
 | `SaveAfterRun` is enabled | Warning: drawings may be changed in place |
 | Mapped-drive paths are used | Warning: recommend a UNC path when access differs across processes |
