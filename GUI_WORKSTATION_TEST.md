@@ -1,4 +1,6 @@
-# GUI Workstation Test Checklist
+# GUI Workstation Regression Checklist — Current Prototype
+
+> **Scope authority:** [PRODUCT_SCOPE.md](PRODUCT_SCOPE.md) defines the target product. This checklist verifies the current LISP/CSV prototype only; it is not the acceptance specification for the future LISP-or-SCR execution model.
 
 Use this checklist on a standard-user Windows workstation that has the matching x64 .NET Desktop Runtime and a licensed AutoCAD/Core Console installation. Do not run it against production-only drawings.
 
@@ -9,7 +11,7 @@ Use this checklist on a standard-user Windows workstation that has the matching 
     dotnet run --project .\BatchAcCore.Gui\BatchAcCore.Gui.csproj
 
 2. Confirm the application starts without elevation.
-3. Create a new profile. Confirm it defaults to `C:\Program Files\Autodesk\AutoCAD 2026\accoreconsole.exe`, 4 workers, a 10-minute timeout, and **Save drawings after successful processing** cleared; then enter the actual Core Console executable, AutoLISP file, drawing list or input directory, and output directories.
+3. Create a new profile. Confirm it defaults to `C:\Program Files\Autodesk\AutoCAD 2026\accoreconsole.exe`, 4 workers, a 10-minute timeout, and **Save drawings after successful processing** cleared; then enter the actual Core Console executable, AutoLISP file, drawing list or input directory, and output directories. This is a regression check for the prototype profile, not a target-model requirement.
 4. Confirm **Create per-job log files** is selected for a new profile. Clear it, save the profile, close/open it, and confirm the setting remains cleared.
 5. Save the profile in a user-writable folder, close/open it, and confirm the fields reload.
 6. If applicable, confirm an editable UNC path remains intact after saving and reopening.
@@ -50,7 +52,7 @@ Expected: preflight performs no DWG processing and does not create the work/outp
 8. Complete the duplicate-filename batch from preflight step 9. Confirm the skipped drawing is listed in both the structured and readable summaries, and no CSV collision occurs.
 9. Confirm the bottom status bar advances by completed drawing count, shows the number of active jobs while running, and ends at the total drawing count when the batch completes.
 
-Expected: the GUI and CLI produce equivalent batch artifacts and outcome.
+Expected: the current prototype GUI and CLI produce equivalent batch artifacts and outcome. This does not impose compatibility requirements on the target-model profiles described in `PRODUCT_SCOPE.md`.
 
 ## 5. Cancellation
 

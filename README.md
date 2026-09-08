@@ -2,6 +2,8 @@
 
 Windows command-line runner for applying an AutoLISP routine to many DWG files in parallel through `accoreconsole.exe`.
 
+The intended product direction and boundaries for the next development stage are documented in [PRODUCT_SCOPE.md](PRODUCT_SCOPE.md).
+
 ## Workflow
 
 1. Put one DWG path per line in `drawings.txt` (blank lines and lines beginning with `#` are ignored), or configure `InputDirectory` to discover DWGs.

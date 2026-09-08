@@ -1,49 +1,52 @@
 # Batch AcCoreConsole GUI — Functional Specification
 
+> **Scope authority:** [PRODUCT_SCOPE.md](PRODUCT_SCOPE.md) supersedes this document if a detail differs. The GUI implements a safe, observable execution workflow for user-vetted routines; it does not author or interpret them.
+
 ## 1. Purpose
 
-The application batches AcCoreConsole-compatible AutoLISP processing over DWG drawings. It provides a safe, inspectable desktop workflow around the existing runner while retaining the command-line interface for automation.
+The application batches externally developed, AcCoreConsole-compatible AutoLISP entry points and standalone Core Console scripts (`.scr`) over DWG drawings. It provides a safe desktop workflow around a shared execution runner while retaining a CLI for automation.
 
-## 2. Minimum viable GUI
+## 2. GUI workflow
 
-### 2.1 Profile setup
+### 2.1 Execution profile
 
-The user can create, open, edit, save, duplicate, and validate a JSON batch profile.
+The user can create, open, edit, save, duplicate, and validate a JSON execution profile.
 
-Required profile choices:
+Every profile selects:
 
 - `AcCoreConsolePath`
-- `LispFilePath`
-- `LispFunction`
+- an execution type: `AutoLisp` or `Script`
+- a routine file path (`.lsp` or `.scr`)
+- an explicit LISP entry-point function when the execution type is `AutoLisp`
 - exactly one input method: `FileListPath` or `InputDirectory`
-- `WorkDirectory`
-- `ResultsDirectory`
+- work and results directories
 
-The GUI also exposes the existing optional execution settings: recursive discovery, invalid-entry handling, worker count, timeout, save-after-run, and retained scripts. File and folder selectors are convenience controls; paths remain editable text values so UNC paths and unusual installations are supported.
+Profiles also expose basic execution settings: recursive discovery, invalid-entry handling, worker count, timeout, save-after-run, retained generated launcher scripts, and per-job logs. If the selected routine accepts inputs or declares outputs, the profile records only the minimal values and output metadata necessary to invoke and report it; the GUI does not inspect routine source to derive those values.
 
 ### 2.2 Preflight
 
-Preflight is explicit and read-only except for any already-supported creation of work/output directories after the user elects to run. It reports each check as pass, warning, or failure.
+Preflight is explicit and read-only, except for work/output directory creation after the user elects to run. It reports each check as pass, warning, or failure.
 
 Required checks:
 
 | Check | Outcome when it fails |
 |---|---|
 | Core Console executable exists and is readable | Cannot run |
-| LISP file exists, is readable, and contains the configured one-argument `defun` | Cannot run |
+| Selected routine file exists, is readable, and matches the selected execution type | Cannot run |
+| AutoLISP entry point is supplied for an AutoLISP profile | Cannot run |
 | Exactly one input method is configured | Cannot run |
 | File-list entries or input-directory discovery produce drawings | Cannot run |
-| Each required drawing is accessible and is a `.dwg` file | Cannot run unless skip-invalid is enabled |
+| Required drawings are accessible `.dwg` files | Cannot run unless skip-invalid is enabled |
 | Work and results directories are distinct and can be created/written | Cannot run |
 | Worker count and timeout are within supported bounds | Cannot run |
-| `SaveAfterRun` is enabled | Warning: drawings may be changed in place |
+| Save-after-run is enabled | Warning: drawings may be changed in place |
 | Mapped-drive paths are used | Warning: recommend a UNC path when access differs across processes |
 
-The GUI may offer a non-destructive Core Console test launch in a later release. It must never be treated as proof that a specific LISP routine will work.
+Preflight validates profile and filesystem conditions only. It does not prove that a routine is correct, Core Console-compatible, or safe for a specific drawing.
 
 ### 2.3 Queue review
 
-After a successful preflight, users can review the resolved drawings before starting. The queue displays full path, source (list/directory), and validation state. Duplicate paths are shown once, matching current runner behavior.
+After successful preflight, users can review the resolved drawings before starting. The queue displays the full path, source, and validation state. Duplicate input paths are shown once.
 
 ### 2.4 Batch run
 
@@ -52,50 +55,47 @@ The run screen shows a persistent overview and one row per drawing:
 - Queue state: queued, running, succeeded, failed, cancelled, or unknown
 - Drawing name and full path
 - Assigned worker number while running
-- Start time, finish time, elapsed time
-- Process exit code, when available
-- Error summary and a link to the corresponding log
+- Start time, finish time, elapsed time, and process exit code when available
+- Error summary and corresponding log
+- Optional routine-result message and declared output paths when available
 
-The total succeeded, failed, running, and queued count updates as jobs end. Generated `summary.json`, logs, scripts retained for troubleshooting, per-drawing CSVs, and combined CSV path remain accessible after completion.
+The total succeeded, failed, running, and queued count updates as jobs end. The application always retains its structured summary and configured logs. A routine may create no output. When a profile declares compatible per-drawing outputs, the application combines them and records either the combined artifact or a combination issue.
 
 ### 2.5 Rerun support
 
-After a completed run, the user can create a new queue containing only failed or cancelled drawings. The source profile remains unchanged. The run record retains a snapshot of the actual normalized settings used.
+After a completed run, the user can create a new queue containing only failed, timed-out, or cancelled drawings. The source profile remains unchanged. The run record retains a snapshot of the normalized execution settings used.
 
 ## 3. Cancellation policy
 
 Cancelling a batch stops scheduling queued jobs immediately and allows every already-started Core Console job to finish normally. The application does not force-terminate Core Console processes as part of ordinary cancellation.
 
-This policy preserves the runner's normal per-drawing completion, logging, and save behavior and avoids representing a forcibly interrupted DWG as a known safe or known failed state. A cancelled batch therefore has two result groups:
-
-1. Jobs that had already started, which retain their normal succeeded or failed result after completion.
-2. Jobs that had not started, which are marked `cancelled` and are eligible for a later rerun.
-
-The summary records the cancellation time and preserves logs and scripts when available. If an active job exceeds its configured timeout, the existing timeout handling determines its result; cancellation does not alter that behavior.
+The summary records the cancellation time and preserves available logs and scripts. Jobs that had not started are marked `cancelled` and are eligible for a later rerun. An active job that exceeds its configured timeout uses normal timeout handling; cancellation does not alter that behavior.
 
 ## 4. Error reporting
 
-Error messages must identify the failed operation and the relevant path, without implying that the application can bypass permissions or repair workstation policy. Categories include configuration, filesystem access, Core Console startup, process timeout, process exit failure, LISP completion-marker failure, CSV combination, and cancellation.
+Error messages identify the failed operation and relevant path, without claiming that the application can bypass permissions or repair workstation policy. Categories include profile/configuration, filesystem access, Core Console startup, process timeout, process exit failure, optional routine-result artifact failure, output combination, and cancellation.
 
 ## 5. Security and portability constraints
 
 - Store profiles per user or in a user-chosen folder; do not require registry configuration.
 - Do not require administrator privileges, install prerequisites, modify AutoCAD profiles, or alter endpoint policy.
-- Framework-dependent deployment requires documented x64 .NET runtime prerequisites; this is outside GUI self-diagnosis because a missing WPF runtime prevents launch.
+- Framework-dependent deployment requires documented x64 .NET runtime prerequisites; a missing WPF runtime prevents launch before GUI self-diagnosis is possible.
 - AutoCAD/Core Console installation and licensing remain external prerequisites.
-- Diagnostic export is opt-in and must let the user exclude settings and paths that could be sensitive.
+- Diagnostic export is opt-in and lets the user exclude settings and paths that could be sensitive.
 
-## 6. Compatibility invariants
+## 6. Implementation invariants
 
-- The existing console executable, JSON settings fields, validation rules, output conventions, and exit-code semantics continue to work.
-- The GUI uses the same runner behavior rather than reimplementing Core Console script generation or CSV combination.
-- A profile saved by the GUI is usable by the CLI when it contains the established settings schema.
+- The GUI and CLI use the same core execution, validation, cancellation, and result-reporting behavior.
+- The runner controls launcher generation, Core Console process ownership, and application-level summaries; the GUI does not reimplement them.
+- Execution status is application-owned and remains available whether or not a routine produces an output file.
+- New profile and result contracts are designed for the target model; compatibility with the prototype's single-LISP, filename-derived, one-argument, CSV-specific contract is not required.
 
-## 7. Acceptance checks for the first release
+## 7. Acceptance checks
 
 1. A standard Windows user can run the GUI from a writable folder with the required .NET runtime and AutoCAD installed, without elevation.
-2. The GUI can select a non-default Core Console location, save it in a profile, and use it for a batch.
-3. Preflight prevents an invalid batch from starting and explains each failure.
-4. A valid profile run produces the same batch artifacts and success/failure outcome as the CLI using that profile.
-5. A user can inspect a failed drawing's log and create a failed-only rerun queue.
-6. Cancellation behaves exactly as the documented policy and never claims that DWG changes were rolled back.
+2. The GUI can select a non-default Core Console location and run both a vetted AutoLISP entry point and a vetted standalone SCR profile.
+3. Preflight prevents an invalid profile from starting and explains each failure without analyzing routine source.
+4. A valid run provides equivalent execution status and batch artifacts through the GUI and CLI using the same target-model profile.
+5. The GUI reports a routine with no output successfully, and combines configured compatible per-drawing outputs when present.
+6. A user can inspect a failed drawing's log and create a failed-only rerun queue.
+7. Cancellation follows the documented policy and never claims DWG changes were rolled back.

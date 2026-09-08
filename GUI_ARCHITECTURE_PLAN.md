@@ -1,24 +1,24 @@
 # Batch AcCoreConsole GUI — Architecture Plan
 
+> **Scope authority:** [PRODUCT_SCOPE.md](PRODUCT_SCOPE.md) controls product scope. This plan replaces prototype-specific LISP signature, CSV, and compatibility assumptions with the target LISP-or-SCR execution model.
+
 ## Current state
 
-The repository currently has one executable project. `Program.cs` contains argument parsing, JSON loading, settings normalization, drawing discovery, script generation, Core Console process execution, CSV aggregation, and console reporting.
-
-This is a good working CLI baseline, but a GUI cannot safely obtain its queue state or cancellation control from `Console.WriteLine` output. The runner needs structured interfaces before a WPF front end is added.
+The current runner is a working CLI baseline with a LISP-specific profile, generated launcher scripts, Core Console process execution, CSV aggregation, and console reporting. The GUI and Core projects provide the basis for moving to the target model, but the current implementation remains a prototype reference rather than a compatibility contract.
 
 ## Target solution layout
 
 ```text
 BatchAcCore.sln
 ├── BatchAcCore.Core
-│   ├── BatchSettings and profile serialization
-│   ├── validation and drawing discovery
-│   ├── script generation and Core Console execution
-│   ├── CSV aggregation
+│   ├── execution-profile and routine-metadata serialization
+│   ├── basic validation and drawing discovery
+│   ├── launcher generation and Core Console execution
+│   ├── optional declared-output collection and combination
 │   ├── structured batch/job events and results
 │   └── cancellation and process ownership
 ├── BatchAcCore.Console
-│   └── existing command-line argument and text-output adapter
+│   └── command-line profile and text-output adapter
 └── BatchAcCore.Gui
     └── WPF profile, preflight, queue, run, and results interface
 ```
@@ -27,72 +27,73 @@ BatchAcCore.sln
 
 ## Core public contracts
 
-The exact type names can change, but the capabilities below should be present.
+The core accepts an execution definition rather than inferring a routine contract from source or filename. It distinguishes the selected execution type and records only the information needed to invoke it, such as an explicit AutoLISP entry point or a standalone SCR path.
 
 ```csharp
 public interface IBatchRunner
 {
     Task<BatchRunResult> RunAsync(
-        BatchSettings settings,
+        ExecutionProfile profile,
         IProgress<BatchEvent>? progress,
         CancellationToken cancellationToken);
 }
 
 public interface IBatchPreflight
 {
-    PreflightReport Check(BatchSettings settings);
+    PreflightReport Check(ExecutionProfile profile);
 }
 ```
 
-`BatchEvent` is a discriminated set of events or an equivalent typed hierarchy: batch started, job queued, job started, job completed, job failed, batch cancelling, batch completed, and diagnostic warning. A `JobResult` retains drawing path, state, worker identifier, exit code, timestamps, log path, script path when retained, and error information.
+`BatchEvent` is a typed hierarchy or equivalent set of events: batch started, job queued, job started, job completed, batch cancelling, batch completed, and diagnostic warning. A `JobResult` retains drawing path, state, worker identifier, exit code, timestamps, log path, retained launcher-script path when applicable, error information, and optional routine-result/output references.
 
-The core returns information; front ends decide how to render it. Console formatting must remain a console responsibility, and WPF view models must not invoke process-management code directly.
+The core returns information; front ends decide how to render it. Console formatting remains a console responsibility, and WPF view models do not invoke process-management code directly.
 
-## Compatibility strategy
+## Migration policy
 
-- Keep the existing JSON property names and defaults for `BatchSettings`.
-- Preserve CLI syntax: one settings-file argument, `--help`, exit code `0` for a fully successful batch, `1` for one or more failed jobs, and `2` for configuration/usage failure.
-- Preserve generated script content and CSV-combination behavior except for intentional, tested fixes.
-- Write a normalized settings snapshot to the run work directory without overwriting a user-owned source profile.
-- Maintain existing summary fields, adding fields only in a backward-compatible way.
+- Design the profile, job-result, and output-declaration contracts for the target model.
+- Do not retain the prototype's JSON property names, filename-derived LISP entry point, one-argument invocation, CSV-only output, or legacy summary shape merely for backward compatibility.
+- Preserve safe operating behavior that remains in scope: bounded concurrency, worker isolation, logging, timeout handling, cancellation semantics, and deterministic results.
+- Keep routine metadata lightweight and external. The application does not parse source to discover dependencies, author routine code, or interpret LISP/SCR behavior.
 
 ## Execution design
 
-The core observes processes it starts for result reporting and timeout handling. Cancellation stops the scheduler from starting queued jobs but does not terminate active `accoreconsole.exe` processes. This preserves normal process completion and avoids ambiguous DWG state from forced termination.
+The core compiles the selected execution definition into the appropriate Core Console launcher flow. An AutoLISP run loads the selected file and invokes the explicitly configured entry point. A standalone SCR run executes the selected script directly. Both modes use the same worker isolation, process monitoring, timeout, logging, cancellation, and application-owned status reporting.
 
-Concurrency remains bounded by `WorkerCount`. Results are accumulated in a thread-safe collection and sorted deterministically before writing the summary and reporting final results. Progress notifications are emitted after state changes and must not block job execution.
+An optional, stable, Core Console-compatible routine-result artifact can surface a routine-specific message and declared outputs. This artifact supplements—not replaces—the process result, log, and batch summary. Output combination is attempted only for compatible outputs explicitly declared by the profile or lightweight metadata.
+
+Cancellation stops the scheduler from starting queued jobs but does not terminate active `accoreconsole.exe` processes. Concurrency remains bounded by the configured worker count. Results are accumulated in a thread-safe collection and sorted deterministically before summary/reporting. Progress notifications are emitted after state changes and do not block job execution.
 
 ## Preflight design
 
-Validation is split into two levels:
+Validation is deliberately basic:
 
-1. **Profile validation:** schema/range checks, required paths, LISP function signature, input-method choice, and work/output distinction.
-2. **Run preflight:** resolved input availability, duplicate/invalid rows, directory creation/write probes, output collision risks, path warnings, and a resolved queue.
+1. **Profile validation:** execution type, required files and paths, explicit AutoLISP entry point when applicable, input-method choice, worker/timeout range, and work/results distinction.
+2. **Run preflight:** resolved input availability, duplicate/invalid rows, directory creation/write probes, declared-output collision risks, path warnings, and a resolved queue.
 
-The run command repeats mandatory validation to prevent bypass through the CLI or stale GUI state. GUI preflight is advisory for review; it is not the only enforcement point.
+Preflight does not validate LISP `defun` signatures, parse SCR commands, resolve routine dependencies, or determine whether a routine is semantically correct. The run command repeats mandatory filesystem and execution-setting validation to prevent bypass through the CLI or stale GUI state.
 
 ## GUI design boundary
 
-The initial WPF application has four main views:
+The WPF application has four main views:
 
-1. Profile editor and profile-file controls.
+1. Execution-profile editor and profile-file controls.
 2. Preflight and drawing-queue review.
 3. Active-run dashboard with queue grid and job detail/log view.
-4. Completion summary and failed-only rerun action.
+4. Completion summary, declared outputs, and failed-only rerun action.
 
 WPF view models depend on `BatchAcCore.Core` contracts only. File/folder selection is isolated behind a GUI service, allowing it to be replaced or tested without affecting the runner.
 
-## Test plan before GUI work
+## Test plan
 
-- Unit tests for profile validation, LISP signature validation, drawing discovery, AutoLISP path escaping, CSV-header validation, and script generation.
-- Runner tests using a controllable fake process launcher to cover success, nonzero exit, missing completion marker, timeout, exception, concurrency, and cancellation that stops queued jobs while active jobs complete normally.
-- CLI compatibility tests for old valid profiles, error codes, and summary output.
-- Manual workstation matrix: standard user, local storage, UNC storage, non-default AutoCAD installation, invalid/missing Core Console, inaccessible output directory, and one successful representative LISP batch.
+- Unit tests for profile validation, execution-type selection, drawing discovery, launcher generation, output declaration validation, and output-combination compatibility.
+- Runner tests using a controllable fake process launcher to cover both execution types, success with no routine output, declared output collection, nonzero exit, missing optional result artifact, timeout, exception, concurrency, and cancellation.
+- GUI/CLI parity tests for target-model profiles and application-owned summaries.
+- Manual workstation matrix: standard user, local storage, UNC storage, non-default AutoCAD installation, invalid/missing Core Console, inaccessible output directory, one representative vetted LISP batch, and one representative vetted SCR batch.
 
 ## Implementation sequence
 
-1. Add a solution and Core project; move logic without behavior changes and cover it with tests.
-2. Introduce typed validation/preflight and structured progress while retaining CLI text output.
-3. Introduce queued-job cancellation with documented semantics and tests.
-4. Add the WPF project and implement profile/preflight/queue/run/results views.
+1. Define the execution-profile, optional routine-metadata, result-artifact, and output-declaration contracts.
+2. Refactor the core runner to support explicit AutoLISP entry points and standalone SCR execution while retaining shared safeguards.
+3. Implement target-model preflight, structured progress, output collection/combination, and tests.
+4. Update the CLI profile adapter and WPF profile/preflight/queue/run/results views.
 5. Validate deployment and support diagnostics on representative workstations.
