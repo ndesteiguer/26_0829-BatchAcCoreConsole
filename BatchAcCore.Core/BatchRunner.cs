@@ -331,7 +331,7 @@ public static class BatchRunner
             @"\b(?:drawing|dwg|file)\b[\s\S]{0,120}\b(?:read[-\s]?only|readonly)\b|\b(?:read[-\s]?only|readonly)\b[\s\S]{0,120}\b(?:drawing|dwg|file)\b",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    private static string BuildScript(BatchSettings settings, string resultPath)
+    internal static string BuildScript(BatchSettings settings, string resultPath)
     {
         var lispPath = EscapeLispString(settings.LispFilePath!);
         var workDirectory = EscapeLispString(settings.WorkDirectory!);
@@ -339,8 +339,11 @@ public static class BatchRunner
         var lispExpression = $"({settings.RoutineFunction} \"{workDirectory}\")";
         var save = settings.SaveAfterRun ? "(command \"_.QSAVE\")\n" : string.Empty;
         // Keep the launcher script compatible with the Core Console subset: no Visual LISP / COM functions.
-        // Do not write an OK marker if the LISP cannot load; Core Console can otherwise exit successfully after a load error.
-        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(if (load \"{lispPath}\")\n  (progn\n    {lispExpression}\n    {save}(setq __batchMarker (open \"{markerPath}\" \"w\"))\n    (write-line \"OK\" __batchMarker)\n    (close __batchMarker)\n  )\n  (progn\n    (setq __batchMarker (open \"{markerPath}\" \"w\"))\n    (write-line \"{LispLoadFailure}\" __batchMarker)\n    (close __batchMarker)\n  )\n)\n(command \"_.QUIT\" \"_Yes\")\n";
+        // `load` can either return nil or signal an AutoLISP error (for example malformed input,
+        // a missing function at load time, or a blocked/untrusted path).  The temporary error
+        // handler covers the latter case, while it is installed only for the load phase so
+        // errors raised by the routine itself remain per-drawing failures.
+        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(defun __batchWriteMarker (message)\n  (setq __batchMarker (open \"{markerPath}\" \"w\"))\n  (if __batchMarker\n    (progn\n      (write-line message __batchMarker)\n      (close __batchMarker)\n    )\n  )\n)\n(setq __batchOriginalError *error*)\n(defun __batchLoadError (message)\n  (__batchWriteMarker \"{LispLoadFailure}\")\n  (setq *error* __batchOriginalError)\n  (princ)\n)\n(setq *error* __batchLoadError)\n(if (load \"{lispPath}\")\n  (progn\n    (setq *error* __batchOriginalError)\n    {lispExpression}\n    {save}(__batchWriteMarker \"OK\")\n  )\n  (progn\n    (setq *error* __batchOriginalError)\n    (__batchWriteMarker \"{LispLoadFailure}\")\n  )\n)\n(command \"_.QUIT\" \"_Yes\")\n";
     }
 
     private static string EscapeLispString(string value) => value.Replace("\\", "/").Replace("\"", "\\\"");
