@@ -1,0 +1,14 @@
+;===============================================================
+;	Blind Script
+;		Unlock all layers; thaw layer 0; set current to layer to 0
+;		Purge regapps, materials, plot styles; reset scalelists; audit
+;
+;==============================================================
+(command "-layer" "u" "*" "")
+(command "-layer" "t" "0" "")
+(command "-layer" "set" "0" "")
+(command "_.-PURGE" "_R" "*" "_N")
+(command "_.-PURGE" "_MA" "*" "_N")
+(command "_.-PURGE" "_P" "*" "_N")
+(command "_.-SCALELISTEDIT" "_R" "_Y" "_E")
+(command "_.AUDIT" "_Y")
