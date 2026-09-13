@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace BatchAcCore.Core;
@@ -78,7 +79,14 @@ public static class BatchRunner
 
         if (settings is null) return Fail(output, "Settings file is empty.");
         var baseDirectory = Path.GetDirectoryName(settingsFile)!;
-        try { settings.Normalize(baseDirectory); }
+        ResolvedExecutionDefinition? executionDefinition = null;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(settings.ExecutionDefinitionPath))
+                executionDefinition = settings.NormalizeExecutionProfile(baseDirectory);
+            else
+                settings.Normalize(baseDirectory);
+        }
         catch (Exception exception) { return Fail(output, exception.Message); }
 
         string[] discoveredDrawings;
@@ -91,13 +99,27 @@ public static class BatchRunner
             return Fail(output, exception.Message);
         }
         if (discoveredDrawings.Length == 0) return Fail(output, "No DWG files were found.");
-        var selection = SelectDrawingsForUniqueCsvOutputs(settings.WorkDirectory!, discoveredDrawings, settings.RoutineFunction);
+        var selection = executionDefinition is null
+            ? SelectDrawingsForUniqueCsvOutputs(settings.WorkDirectory!, discoveredDrawings, settings.RoutineFunction)
+            : new DrawingSelection(discoveredDrawings, []);
         var drawings = selection.Drawings;
-        var expectedCsvFiles = GetExpectedCsvFiles(settings.WorkDirectory!, drawings, settings.RoutineFunction);
+        IReadOnlyList<string> expectedCsvFiles = executionDefinition is null
+            ? GetExpectedCsvFiles(settings.WorkDirectory!, drawings, settings.RoutineFunction)
+            : [];
 
         Directory.CreateDirectory(settings.WorkDirectory!);
         var isolateRoot = Path.Combine(Path.GetTempPath(), $"BatchAcCoreConsole-{Guid.NewGuid():N}");
-        var csvFilesBeforeBatch = SnapshotCsvFiles(settings.WorkDirectory!);
+        var csvFilesBeforeBatch = executionDefinition is null
+            ? SnapshotCsvFiles(settings.WorkDirectory!)
+            : new Dictionary<string, CsvFileStamp>(StringComparer.OrdinalIgnoreCase);
+        var batchOutputDirectory = executionDefinition?.ProducesOutput == true
+            ? Path.Combine(settings.WorkDirectory!, $"batch-output-{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}")
+            : null;
+        if (batchOutputDirectory is not null)
+        {
+            Directory.CreateDirectory(batchOutputDirectory);
+            output.WriteLine($"Routine output directory: {batchOutputDirectory}");
+        }
         output.WriteLine($"Queued {drawings.Count} drawing(s), using {settings.WorkerCount} worker(s).");
         if (selection.OmittedDrawings.Count > 0)
             output.WriteLine($"Skipped {selection.OmittedDrawings.Count} drawing(s) with duplicate derived CSV output filenames.");
@@ -143,7 +165,7 @@ public static class BatchRunner
                 }
 
                 Report(progress, BatchEventKind.JobStarted, drawing, workerId, "Running");
-                var result = await RunJobAsync(settings, drawing, isolateRoot, workerId, output);
+                var result = await RunJobAsync(settings, drawing, isolateRoot, workerId, output, executionDefinition, batchOutputDirectory);
                 if (string.Equals(result.Error, LispLoadFailure, StringComparison.Ordinal))
                     Interlocked.Exchange(ref lispLoadFailureDetected, 1);
                 results.Add(result);
@@ -174,38 +196,41 @@ public static class BatchRunner
         string? combinedCsvPath = null;
         string? combinationError = null;
         var issues = new List<string>();
-        if (selection.OmittedDrawings.Count > 0)
-            issues.Add($"{selection.OmittedDrawings.Count} drawing(s) were skipped because their derived CSV output filenames duplicate an earlier input. See Skipped drawings for details.");
-        if (Volatile.Read(ref lispLoadFailureDetected) != 0)
+        if (executionDefinition is null)
         {
-            const string issue = "CSV combination skipped because the LISP routine failed to load.";
-            issues.Add(issue);
-            output.WriteError(issue);
-        }
-        else
-        {
-            var batchCsvFiles = GetBatchCsvFiles(expectedCsvFiles, csvFilesBeforeBatch).ToArray();
-            if (batchCsvFiles.Length != expectedCsvFiles.Count)
+            if (selection.OmittedDrawings.Count > 0)
+                issues.Add($"{selection.OmittedDrawings.Count} drawing(s) were skipped because their derived CSV output filenames duplicate an earlier input. See Skipped drawings for details.");
+            if (Volatile.Read(ref lispLoadFailureDetected) != 0)
             {
-                combinationError = $"Expected {expectedCsvFiles.Count} CSV file(s) from this batch, but found {batchCsvFiles.Length}. The combined CSV includes every expected CSV that was found.";
-                var missingCsvFiles = GetMissingExpectedCsvFiles(expectedCsvFiles, batchCsvFiles);
-                if (missingCsvFiles.Count > 0)
-                    combinationError = $"{combinationError}{Environment.NewLine}Missing expected CSV file(s):{Environment.NewLine}{string.Join(Environment.NewLine, missingCsvFiles)}";
-                issues.Add(combinationError);
-                output.WriteError(combinationError);
-            }
-
-            try
-            {
-                combinedCsvPath = await CombineCsvFilesAsync(settings.ResultsDirectory!, batchCsvFiles);
-                output.WriteLine($"Combined CSV: {combinedCsvPath}");
-            }
-            catch (Exception exception)
-            {
-                combinationError = combinationError is null ? exception.Message : $"{combinationError}{Environment.NewLine}{exception.Message}";
-                var issue = $"CSV combination failed: {exception.Message}";
+                const string issue = "CSV combination skipped because the LISP routine failed to load.";
                 issues.Add(issue);
                 output.WriteError(issue);
+            }
+            else
+            {
+                var batchCsvFiles = GetBatchCsvFiles(expectedCsvFiles, csvFilesBeforeBatch).ToArray();
+                if (batchCsvFiles.Length != expectedCsvFiles.Count)
+                {
+                    combinationError = $"Expected {expectedCsvFiles.Count} CSV file(s) from this batch, but found {batchCsvFiles.Length}. The combined CSV includes every expected CSV that was found.";
+                    var missingCsvFiles = GetMissingExpectedCsvFiles(expectedCsvFiles, batchCsvFiles);
+                    if (missingCsvFiles.Count > 0)
+                        combinationError = $"{combinationError}{Environment.NewLine}Missing expected CSV file(s):{Environment.NewLine}{string.Join(Environment.NewLine, missingCsvFiles)}";
+                    issues.Add(combinationError);
+                    output.WriteError(combinationError);
+                }
+
+                try
+                {
+                    combinedCsvPath = await CombineCsvFilesAsync(settings.ResultsDirectory!, batchCsvFiles);
+                    output.WriteLine($"Combined CSV: {combinedCsvPath}");
+                }
+                catch (Exception exception)
+                {
+                    combinationError = combinationError is null ? exception.Message : $"{combinationError}{Environment.NewLine}{exception.Message}";
+                    var issue = $"CSV combination failed: {exception.Message}";
+                    issues.Add(issue);
+                    output.WriteError(issue);
+                }
             }
         }
 
@@ -216,7 +241,7 @@ public static class BatchRunner
         try
         {
             Directory.CreateDirectory(settings.ResultsDirectory!);
-            await File.WriteAllTextAsync(readableSummaryCandidate, BuildReadableSummary(settings, ordered, succeeded, failed, skipped, cancelled, elapsedRuntime, combinedCsvPath, issues, summaryPath));
+            await File.WriteAllTextAsync(readableSummaryCandidate, BuildReadableSummary(settings, executionDefinition, batchOutputDirectory, ordered, succeeded, failed, skipped, cancelled, elapsedRuntime, combinedCsvPath, issues, summaryPath));
             readableSummaryPath = readableSummaryCandidate;
             output.WriteLine($"Batch summary: {readableSummaryPath}");
         }
@@ -234,7 +259,14 @@ public static class BatchRunner
         return new(exitCode, ordered, summaryPath, readableSummaryPath, combinedCsvPath, issues, cancelled > 0);
     }
 
-    private static async Task<JobResult> RunJobAsync(BatchSettings settings, string drawing, string isolateRoot, int workerId, IBatchOutput output)
+    private static async Task<JobResult> RunJobAsync(
+        BatchSettings settings,
+        string drawing,
+        string isolateRoot,
+        int workerId,
+        IBatchOutput output,
+        ResolvedExecutionDefinition? executionDefinition,
+        string? batchOutputDirectory)
     {
         var jobId = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}";
         var scriptDirectory = settings.KeepScripts ? settings.WorkDirectory! : isolateRoot;
@@ -250,7 +282,10 @@ public static class BatchRunner
         try
         {
             Directory.CreateDirectory(isolateDirectory);
-            await File.WriteAllTextAsync(scriptPath, BuildScript(settings, resultPath), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            var launcherScript = executionDefinition is null
+                ? BuildScript(settings, resultPath)
+                : BuildScript(settings, executionDefinition, resultPath, batchOutputDirectory);
+            await File.WriteAllTextAsync(scriptPath, launcherScript, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             using var process = new Process
             {
                 StartInfo = new ProcessStartInfo
@@ -335,9 +370,44 @@ public static class BatchRunner
     {
         var lispPath = EscapeLispString(settings.LispFilePath!);
         var workDirectory = EscapeLispString(settings.WorkDirectory!);
-        var markerPath = EscapeLispString(resultPath);
         var lispExpression = $"({settings.RoutineFunction} \"{workDirectory}\")";
         var save = settings.SaveAfterRun ? "(command \"_.QSAVE\")\n" : string.Empty;
+        return BuildLispLauncher(lispPath, lispExpression, resultPath, save);
+    }
+
+    internal static string BuildScript(
+        BatchSettings settings,
+        ResolvedExecutionDefinition executionDefinition,
+        string resultPath,
+        string? batchOutputDirectory)
+    {
+        var save = settings.SaveAfterRun ? "(command \"_.QSAVE\")\n" : string.Empty;
+        if (executionDefinition.Type == ExecutionType.BlindScript)
+            return BuildScriptLauncher(executionDefinition.RoutinePath, resultPath, save);
+
+        var function = executionDefinition.Function!;
+        var lispExpression = executionDefinition.Type switch
+        {
+            ExecutionType.BlindLisp => $"({function})",
+            ExecutionType.LispResult or ExecutionType.LispReport =>
+                $"({function} \"{EscapeLispString(RequiredBatchOutputDirectory(batchOutputDirectory))}\")",
+            ExecutionType.LispInputReport =>
+                $"({function} \"{EscapeLispString(settings.SharedInputFilePath!)}\" \"{EscapeLispString(RequiredBatchOutputDirectory(batchOutputDirectory))}\")",
+            _ => throw new ArgumentException($"Unsupported execution type: {executionDefinition.Type}.")
+        };
+        return BuildLispLauncher(EscapeLispString(executionDefinition.RoutinePath), lispExpression, resultPath, save);
+    }
+
+    private static string BuildScriptLauncher(string routinePath, string resultPath, string save)
+    {
+        var scriptPath = EscapeLispString(routinePath);
+        var markerPath = EscapeLispString(resultPath);
+        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(defun __batchWriteMarker (message)\n  (setq __batchMarker (open \"{markerPath}\" \"w\"))\n  (if __batchMarker\n    (progn\n      (write-line message __batchMarker)\n      (close __batchMarker)\n    )\n  )\n)\n(command \"_.SCRIPT\" \"{scriptPath}\")\n{save}(__batchWriteMarker \"OK\")\n(command \"_.QUIT\" \"_Yes\")\n";
+    }
+
+    private static string BuildLispLauncher(string lispPath, string lispExpression, string resultPath, string save)
+    {
+        var markerPath = EscapeLispString(resultPath);
         // Keep the launcher script compatible with the Core Console subset: no Visual LISP / COM functions.
         // `load` can either return nil or signal an AutoLISP error (for example malformed input,
         // a missing function at load time, or a blocked/untrusted path).  The temporary error
@@ -345,6 +415,11 @@ public static class BatchRunner
         // errors raised by the routine itself remain per-drawing failures.
         return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(defun __batchWriteMarker (message)\n  (setq __batchMarker (open \"{markerPath}\" \"w\"))\n  (if __batchMarker\n    (progn\n      (write-line message __batchMarker)\n      (close __batchMarker)\n    )\n  )\n)\n(setq __batchOriginalError *error*)\n(defun __batchLoadError (message)\n  (__batchWriteMarker \"{LispLoadFailure}\")\n  (setq *error* __batchOriginalError)\n  (princ)\n)\n(setq *error* __batchLoadError)\n(if (load \"{lispPath}\")\n  (progn\n    (setq *error* __batchOriginalError)\n    {lispExpression}\n    {save}(__batchWriteMarker \"OK\")\n  )\n  (progn\n    (setq *error* __batchOriginalError)\n    (__batchWriteMarker \"{LispLoadFailure}\")\n  )\n)\n(command \"_.QUIT\" \"_Yes\")\n";
     }
+
+    private static string RequiredBatchOutputDirectory(string? batchOutputDirectory) =>
+        string.IsNullOrWhiteSpace(batchOutputDirectory)
+            ? throw new ArgumentException("An output-producing execution type requires a batch output directory.")
+            : batchOutputDirectory;
 
     private static string EscapeLispString(string value) => value.Replace("\\", "/").Replace("\"", "\\\"");
 
@@ -513,6 +588,8 @@ public static class BatchRunner
 
     private static string BuildReadableSummary(
         BatchSettings settings,
+        ResolvedExecutionDefinition? executionDefinition,
+        string? batchOutputDirectory,
         IReadOnlyList<JobResult> results,
         int succeeded,
         int failed,
@@ -532,13 +609,33 @@ public static class BatchRunner
             ? $"Results: {succeeded} succeeded, {failed} failed, {skipped} skipped"
             : $"Results: {succeeded} succeeded, {failed} failed, {skipped} skipped, {cancelled} cancelled");
         summary.AppendLine($"Structured summary: {jsonSummaryPath}");
-        summary.AppendLine($"Combined CSV: {combinedCsvPath ?? "Not created"}");
+        summary.AppendLine(executionDefinition is null
+            ? $"Combined CSV: {combinedCsvPath ?? "Not created"}"
+            : $"Combined output: {combinedCsvPath ?? "Not created"}");
 
         summary.AppendLine();
         summary.AppendLine("Effective settings:");
         summary.AppendLine($"- AcCoreConsole path: {settings.AcCoreConsolePath}");
-        summary.AppendLine($"- LISP file path: {settings.LispFilePath}");
-        summary.AppendLine($"- LISP function: {settings.RoutineFunction} (derived from the filename)");
+        if (executionDefinition is null)
+        {
+            summary.AppendLine($"- LISP file path: {settings.LispFilePath}");
+            summary.AppendLine($"- LISP function: {settings.RoutineFunction} (derived from the filename)");
+        }
+        else
+        {
+            summary.AppendLine($"- Execution definition: {executionDefinition.DefinitionPath}");
+            summary.AppendLine($"- Execution type: {executionDefinition.Type}");
+            summary.AppendLine($"- Routine path: {executionDefinition.RoutinePath}");
+            if (executionDefinition.Function is not null)
+                summary.AppendLine($"- Routine function: {executionDefinition.Function}");
+            if (executionDefinition.RequiresSharedInputFile)
+                summary.AppendLine($"- Shared input file: {settings.SharedInputFilePath}");
+            if (executionDefinition.ProducesOutput)
+            {
+                summary.AppendLine($"- Output format: {executionDefinition.OutputFormat}");
+                summary.AppendLine($"- Routine output directory: {batchOutputDirectory}");
+            }
+        }
         summary.AppendLine($"- File list path: {settings.FileListPath ?? "Not used"}");
         summary.AppendLine($"- Skip invalid file-list entries: {settings.SkipInvalidFileListEntries}");
         summary.AppendLine($"- Input directory: {settings.InputDirectory ?? "Not used"}");
@@ -613,6 +710,8 @@ public static class BatchRunner
 public sealed class BatchSettings : INotifyPropertyChanged
 {
     private string? _acCoreConsolePath = @"C:\Program Files\Autodesk\AutoCAD 2026\accoreconsole.exe";
+    private string? _executionDefinitionPath;
+    private string? _sharedInputFilePath;
     private string? _lispFilePath;
     private string? _fileListPath;
     private bool _skipInvalidFileListEntries;
@@ -627,6 +726,10 @@ public sealed class BatchSettings : INotifyPropertyChanged
     private string? _resultsDirectory;
 
     public string? AcCoreConsolePath { get => _acCoreConsolePath; set => SetField(ref _acCoreConsolePath, value); }
+    public string? ExecutionDefinitionPath { get => _executionDefinitionPath; set => SetField(ref _executionDefinitionPath, value); }
+    public string? SharedInputFilePath { get => _sharedInputFilePath; set => SetField(ref _sharedInputFilePath, value); }
+    [JsonIgnore]
+    public ResolvedExecutionDefinition? ExecutionDefinition { get; private set; }
     public string? LispFilePath { get => _lispFilePath; set => SetField(ref _lispFilePath, value); }
     internal string RoutineFunction { get; private set; } = string.Empty;
     public string? FileListPath { get => _fileListPath; set => SetField(ref _fileListPath, value); }
@@ -660,6 +763,22 @@ public sealed class BatchSettings : INotifyPropertyChanged
         if (string.IsNullOrWhiteSpace(RoutineFunction) || RoutineFunction.Any(char.IsWhiteSpace) || RoutineFunction.IndexOfAny(['(', ')', '"']) >= 0)
             throw new ArgumentException("The filename in LispFilePath must be a valid AutoLISP function name, e.g. PROCESSDRAWING.lsp.");
         ValidateLispFunctionSignature(LispFilePath, RoutineFunction);
+        NormalizeBatchInputsAndSettings(baseDirectory);
+    }
+
+    /// <summary>
+    /// Normalizes the target-model execution profile without invoking the legacy LISP filename/signature rules.
+    /// </summary>
+    public ResolvedExecutionDefinition NormalizeExecutionProfile(string baseDirectory)
+    {
+        AcCoreConsolePath = RequiredFile(AcCoreConsolePath, "AcCoreConsolePath", baseDirectory);
+        var definition = LoadExecutionDefinition(baseDirectory);
+        NormalizeBatchInputsAndSettings(baseDirectory);
+        return definition;
+    }
+
+    private void NormalizeBatchInputsAndSettings(string baseDirectory)
+    {
         if (string.IsNullOrWhiteSpace(FileListPath) == string.IsNullOrWhiteSpace(InputDirectory))
             throw new ArgumentException("Set exactly one of FileListPath or InputDirectory.");
         if (!string.IsNullOrWhiteSpace(FileListPath)) FileListPath = RequiredFile(FileListPath, "FileListPath", baseDirectory);
@@ -674,6 +793,23 @@ public sealed class BatchSettings : INotifyPropertyChanged
         ResultsDirectory = Resolve(string.IsNullOrWhiteSpace(ResultsDirectory) ? "results" : ResultsDirectory, baseDirectory);
         if (string.Equals(WorkDirectory, ResultsDirectory, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("ResultsDirectory must be different from WorkDirectory.");
+    }
+
+    /// <summary>
+    /// Loads and validates the v1 paired execution definition used as the authoritative routine contract.
+    /// </summary>
+    public ResolvedExecutionDefinition LoadExecutionDefinition(string baseDirectory)
+    {
+        ExecutionDefinitionPath = RequiredFile(ExecutionDefinitionPath, "ExecutionDefinitionPath", baseDirectory);
+        var definition = global::BatchAcCore.Core.ExecutionDefinition.Load(ExecutionDefinitionPath);
+
+        if (definition.RequiresSharedInputFile)
+            SharedInputFilePath = RequiredFile(SharedInputFilePath, "SharedInputFilePath", baseDirectory);
+        else if (!string.IsNullOrWhiteSpace(SharedInputFilePath))
+            throw new ArgumentException("SharedInputFilePath is valid only for lisp-input-report execution definitions.");
+
+        ExecutionDefinition = definition;
+        return definition;
     }
 
     private static string RequiredFile(string? value, string name, string baseDirectory)

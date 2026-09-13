@@ -23,6 +23,12 @@ The application is an orchestration, safety, and reporting layer around known-go
 - Scripts and routines may be repeatable production tools or one-off, niche jobs. Both are valid batch inputs.
 - A routine can optionally write a small, stable, Core Console-compatible result artifact so the application can surface routine-specific messages and declared outputs. The application-owned process, log, and summary records remain authoritative for execution status.
 
+## Paired execution definitions
+
+Each vetted routine is paired with a small execution-definition JSON file. It identifies one of five fixed execution types, the routine path, an explicit LISP function when applicable, and an output format when applicable. The execution type fixes LISP argument order; batch-specific values such as a shared input file remain in the batch profile.
+
+The definition is stored beside its routine and has no master-catalog dependency. The full v1 contract, output handling, lifecycle convention, examples, and validation boundary are defined in [EXECUTION_CONTRACT.md](EXECUTION_CONTRACT.md).
+
 ## Deliberate boundaries
 
 - Do not recreate AutoCAD editing tools, interactive workflows, or AutoCAD toolsets.

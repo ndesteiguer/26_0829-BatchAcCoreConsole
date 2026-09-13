@@ -1,0 +1,6 @@
+{
+  "type": "lisp-report",
+  "routine": "MultiLinePerFileOutputLisp.lsp",
+  "function": "REFREPORTCSV",
+  "outputFormat": "csv"
+}

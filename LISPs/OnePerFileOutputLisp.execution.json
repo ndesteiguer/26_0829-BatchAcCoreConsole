@@ -1,0 +1,6 @@
+{
+  "type": "lisp-result",
+  "routine": "OnePerFileOutputLisp.lsp",
+  "function": "BC:PurgeResources",
+  "outputFormat": "json"
+}

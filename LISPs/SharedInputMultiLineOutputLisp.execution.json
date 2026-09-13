@@ -1,0 +1,6 @@
+{
+  "type": "lisp-input-report",
+  "routine": "SharedInputMultiLineOutputLisp.lsp",
+  "function": "wsle-repathcsv",
+  "outputFormat": "csv"
+}

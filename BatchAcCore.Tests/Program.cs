@@ -13,6 +13,7 @@ try
     VerifyReadOnlySaveDetection();
     VerifyCurrentProfileDefaults();
     VerifySettingsChangeNotifications();
+    VerifyExecutionDefinitionModels(workspace);
     Console.WriteLine("All BatchAcCore verification checks passed.");
     return 0;
 }
@@ -188,8 +189,138 @@ static void VerifySettingsChangeNotifications()
 
     settings.CreateLogFiles = false;
     settings.TimeoutMinutes = 45;
+    settings.ExecutionDefinitionPath = "routine.execution.json";
 
-    Assert(changedProperties.SequenceEqual([nameof(BatchSettings.CreateLogFiles), nameof(BatchSettings.TimeoutMinutes)]), "Batch settings must report profile edits so the GUI can identify stale results.");
+    Assert(changedProperties.SequenceEqual([nameof(BatchSettings.CreateLogFiles), nameof(BatchSettings.TimeoutMinutes), nameof(BatchSettings.ExecutionDefinitionPath)]), "Batch settings must report profile edits so the GUI can identify stale results.");
+}
+
+static void VerifyExecutionDefinitionModels(string workspace)
+{
+    var definitionsDirectory = Path.Combine(workspace, "execution-definitions");
+    Directory.CreateDirectory(definitionsDirectory);
+    File.WriteAllText(Path.Combine(definitionsDirectory, "BlindScript.scr"), "; no save or quit\n");
+    File.WriteAllText(Path.Combine(definitionsDirectory, "BlindLisp.lsp"), "(princ)\n");
+    File.WriteAllText(Path.Combine(definitionsDirectory, "Result.lsp"), "(princ)\n");
+    File.WriteAllText(Path.Combine(definitionsDirectory, "Report.lsp"), "(princ)\n");
+    File.WriteAllText(Path.Combine(definitionsDirectory, "InputReport.lsp"), "(princ)\n");
+    var inputPath = Path.Combine(definitionsDirectory, "input.csv");
+    File.WriteAllText(inputPath, "Reference,Path\n");
+
+    var cases = new[]
+    {
+        (FileName: "blind-script.execution.json", Json: "{\"type\":\"blind-script\",\"routine\":\"BlindScript.scr\"}", Type: ExecutionType.BlindScript, Function: (string?)null, OutputFormat: (string?)null),
+        (FileName: "blind-lisp.execution.json", Json: "{\"type\":\"blind-lisp\",\"routine\":\"BlindLisp.lsp\",\"function\":\"c:RUN\"}", Type: ExecutionType.BlindLisp, Function: "c:RUN", OutputFormat: (string?)null),
+        (FileName: "result.execution.json", Json: "{\"type\":\"lisp-result\",\"routine\":\"Result.lsp\",\"function\":\"RESULT\",\"outputFormat\":\"json\"}", Type: ExecutionType.LispResult, Function: "RESULT", OutputFormat: "json"),
+        (FileName: "report.execution.json", Json: "{\"type\":\"lisp-report\",\"routine\":\"Report.lsp\",\"function\":\"REPORT\",\"outputFormat\":\"csv\"}", Type: ExecutionType.LispReport, Function: "REPORT", OutputFormat: "csv"),
+        (FileName: "input-report.execution.json", Json: "{\"type\":\"lisp-input-report\",\"routine\":\"InputReport.lsp\",\"function\":\"INPUTREPORT\",\"outputFormat\":\"csv\"}", Type: ExecutionType.LispInputReport, Function: "INPUTREPORT", OutputFormat: "csv")
+    };
+
+    foreach (var testCase in cases)
+    {
+        var definitionPath = Path.Combine(definitionsDirectory, testCase.FileName);
+        File.WriteAllText(definitionPath, testCase.Json);
+        var definition = ExecutionDefinition.Load(definitionPath);
+        Assert(definition.Type == testCase.Type, $"{testCase.FileName} must resolve its execution type.");
+        Assert(definition.Function == testCase.Function, $"{testCase.FileName} must preserve its function.");
+        Assert(definition.OutputFormat == testCase.OutputFormat, $"{testCase.FileName} must preserve its output format.");
+        Assert(definition.RoutinePath == Path.Combine(definitionsDirectory, Path.GetFileName(definition.RoutinePath)), $"{testCase.FileName} must resolve its routine path relative to the definition.");
+    }
+
+    var launcherSettings = new BatchSettings
+    {
+        SaveAfterRun = true,
+        SharedInputFilePath = inputPath
+    };
+    var markerPath = Path.Combine(definitionsDirectory, "launcher.result");
+    var outputDirectory = Path.Combine(definitionsDirectory, "batch-output");
+    var escapedOutputDirectory = outputDirectory.Replace("\\", "/");
+    var escapedInputPath = inputPath.Replace("\\", "/");
+
+    var blindScriptDefinition = ExecutionDefinition.Load(Path.Combine(definitionsDirectory, "blind-script.execution.json"));
+    var blindScriptLauncher = BatchRunner.BuildScript(launcherSettings, blindScriptDefinition, markerPath, null);
+    Assert(blindScriptLauncher.Contains("(command \"_.SCRIPT\"", StringComparison.Ordinal), "A blind script launcher must invoke the supplied SCR file.");
+    Assert(blindScriptLauncher.Contains("BlindScript.scr", StringComparison.Ordinal), "A blind script launcher must reference its routine.");
+    Assert(blindScriptLauncher.Contains("(command \"_.QSAVE\")", StringComparison.Ordinal), "The application must own optional saving for scripts.");
+    Assert(blindScriptLauncher.Contains("(command \"_.QUIT\" \"_Yes\")", StringComparison.Ordinal), "The application must own quitting for scripts.");
+
+    var blindLispDefinition = ExecutionDefinition.Load(Path.Combine(definitionsDirectory, "blind-lisp.execution.json"));
+    var blindLispLauncher = BatchRunner.BuildScript(launcherSettings, blindLispDefinition, markerPath, null);
+    Assert(blindLispLauncher.Contains("(c:RUN)", StringComparison.Ordinal), "A blind LISP launcher must call its function with no arguments.");
+
+    var resultDefinition = ExecutionDefinition.Load(Path.Combine(definitionsDirectory, "result.execution.json"));
+    var resultLauncher = BatchRunner.BuildScript(launcherSettings, resultDefinition, markerPath, outputDirectory);
+    Assert(resultLauncher.Contains($"(RESULT \"{escapedOutputDirectory}\")", StringComparison.Ordinal), "A lisp-result launcher must pass the batch output directory as its only argument.");
+
+    var inputReportDefinition = ExecutionDefinition.Load(Path.Combine(definitionsDirectory, "input-report.execution.json"));
+    var inputReportLauncher = BatchRunner.BuildScript(launcherSettings, inputReportDefinition, markerPath, outputDirectory);
+    Assert(inputReportLauncher.Contains($"(INPUTREPORT \"{escapedInputPath}\" \"{escapedOutputDirectory}\")", StringComparison.Ordinal), "A lisp-input-report launcher must pass the shared input path before the batch output directory.");
+    AssertThrows(() => BatchRunner.BuildScript(launcherSettings, inputReportDefinition, markerPath, null), "An output-producing LISP launcher must reject a missing batch output directory.");
+
+    var profile = new BatchSettings
+    {
+        ExecutionDefinitionPath = Path.Combine("execution-definitions", "input-report.execution.json"),
+        SharedInputFilePath = Path.Combine("execution-definitions", "input.csv")
+    };
+    var resolvedProfileDefinition = profile.LoadExecutionDefinition(workspace);
+    Assert(resolvedProfileDefinition.RequiresSharedInputFile, "lisp-input-report must require the profile shared input file.");
+    Assert(profile.SharedInputFilePath == inputPath, "SharedInputFilePath must resolve relative to the profile directory.");
+    Assert(profile.ExecutionDefinitionPath == Path.Combine(definitionsDirectory, "input-report.execution.json"), "ExecutionDefinitionPath must resolve relative to the profile directory.");
+
+    var drawingPath = Path.Combine(definitionsDirectory, "sample.dwg");
+    var drawingListPath = Path.Combine(definitionsDirectory, "drawings.txt");
+    File.WriteAllText(drawingPath, "Drawing validation placeholder.");
+    File.WriteAllText(drawingListPath, "sample.dwg\n");
+    var targetPreflightSettings = new BatchSettings
+    {
+        AcCoreConsolePath = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+        ExecutionDefinitionPath = Path.Combine("execution-definitions", "input-report.execution.json"),
+        SharedInputFilePath = Path.Combine("execution-definitions", "input.csv"),
+        FileListPath = Path.Combine("execution-definitions", "drawings.txt"),
+        WorkDirectory = Path.Combine("execution-definitions", "work"),
+        ResultsDirectory = Path.Combine("execution-definitions", "results")
+    };
+    var targetPreflight = BatchPreflight.Check(targetPreflightSettings, workspace);
+    Assert(targetPreflight.CanRun, "A valid target-model execution profile must pass preflight.");
+    Assert(targetPreflight.Drawings.Count == 1 && targetPreflight.OmittedDrawings.Count == 0, "Target-model preflight must retain every drawing because output filenames are routine-owned.");
+    Assert(targetPreflight.Diagnostics.Any(diagnostic => diagnostic is { Severity: PreflightSeverity.Pass, Check: "Execution definition" }), "Target-model preflight must report its execution definition.");
+    Assert(targetPreflight.Diagnostics.Any(diagnostic => diagnostic is { Severity: PreflightSeverity.Pass, Check: "Shared input file" }), "Target-model preflight must report the required shared input file.");
+    Assert(targetPreflight.Diagnostics.Any(diagnostic => diagnostic is { Severity: PreflightSeverity.Pass, Check: "Routine output" } && diagnostic.Message.Contains("csv", StringComparison.Ordinal)), "Target-model preflight must report the declared output format.");
+    Assert(!targetPreflight.Diagnostics.Any(diagnostic => diagnostic.Check == "CSV output"), "Target-model preflight must not apply legacy derived CSV-name checks.");
+
+    var missingInputProfile = new BatchSettings { ExecutionDefinitionPath = Path.Combine(definitionsDirectory, "input-report.execution.json") };
+    AssertThrows(() => missingInputProfile.LoadExecutionDefinition(workspace), "A lisp-input-report profile must require SharedInputFilePath.");
+    var missingInputPreflightSettings = new BatchSettings
+    {
+        AcCoreConsolePath = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+        ExecutionDefinitionPath = Path.Combine("execution-definitions", "input-report.execution.json"),
+        FileListPath = Path.Combine("execution-definitions", "drawings.txt"),
+        WorkDirectory = Path.Combine("execution-definitions", "work"),
+        ResultsDirectory = Path.Combine("execution-definitions", "results")
+    };
+    var missingInputPreflight = BatchPreflight.Check(missingInputPreflightSettings, workspace);
+    Assert(!missingInputPreflight.CanRun && missingInputPreflight.Diagnostics.Single().Check == "Shared input file", "A missing shared input file must block target-model preflight.");
+    AssertThrows(() => ExecutionDefinition.Load(Path.Combine(definitionsDirectory, "{\"type\":\"blind-lisp\"}.json")), "A missing execution-definition file must fail validation.");
+    var invalidDefinitionPath = Path.Combine(definitionsDirectory, "invalid.execution.json");
+    File.WriteAllText(invalidDefinitionPath, "{\"type\":\"lisp-report\",\"routine\":\"Report.lsp\",\"outputFormat\":\"csv\"}");
+    AssertThrows(() => ExecutionDefinition.Load(invalidDefinitionPath), "A LISP execution definition without Function must fail validation.");
+}
+
+static void AssertThrows(Action action, string message)
+{
+    try
+    {
+        action();
+    }
+    catch (ArgumentException)
+    {
+        return;
+    }
+    catch (FileNotFoundException)
+    {
+        return;
+    }
+
+    throw new InvalidOperationException(message);
 }
 
 static void Assert(bool condition, string message)

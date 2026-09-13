@@ -1,6 +1,6 @@
 # Batch AcCoreConsole GUI — Product Outline
 
-> **Scope authority:** [PRODUCT_SCOPE.md](PRODUCT_SCOPE.md) defines the product goals, boundaries, and deferred work. This outline describes the GUI direction within that scope; it does not preserve constraints from the current prototype.
+> **Scope authority:** [PRODUCT_SCOPE.md](PRODUCT_SCOPE.md) defines the product goals, boundaries, and deferred work. [EXECUTION_CONTRACT.md](EXECUTION_CONTRACT.md) defines routine execution details. This outline describes the GUI direction within that scope; it does not preserve constraints from the current prototype.
 
 ## Product purpose
 
@@ -12,7 +12,7 @@ The product is an orchestration, safety, and reporting tool. It is not an AutoCA
 
 1. Select or load a saved execution profile.
 2. Choose Core Console, an execution type (AutoLISP or SCR), its externally authored routine, and a drawing list or input directory.
-3. Supply the explicit AutoLISP entry point when applicable and any minimal execution settings the profile requires.
+3. Supply the explicit AutoLISP entry point when applicable and an optional shared input file when the vetted LISP requires one.
 4. Run basic preflight checks and review the resolved drawing queue.
 5. Run jobs in parallel with clear per-drawing status and retained logs.
 6. Review execution results, optional routine-declared output files and combinations, failures, and summaries.
@@ -27,7 +27,7 @@ The product is an orchestration, safety, and reporting tool. It is not an AutoCA
 - Per-drawing logs, errors, elapsed time, and failed-only reruns.
 - Saved execution profiles and run-specific settings snapshots.
 - Routine-independent execution reporting, with optional combination of compatible per-drawing outputs.
-- Lightweight external routine metadata when needed; no source parsing or authoring features.
+- Lightweight external routine metadata for execution type, LISP entry point, optional shared input file, and output mode; no source parsing or authoring features.
 
 ## Compatibility and deployment baseline
 
@@ -68,7 +68,7 @@ The core exposes structured validation, progress, job results, and controlled ca
 
 ## Open implementation decisions
 
-- Exact execution-profile schema for AutoLISP entry points, standalone SCR files, optional parameters, and optional output declarations.
+- Exact execution-profile schema for AutoLISP entry points, standalone SCR files, an optional shared input file, and optional output declarations.
 - Stable Core Console-compatible routine-result artifact format.
 - Rules for combining compatible output files beyond CSV.
 - Cancellation behavior for running Core Console processes and any partially modified DWGs.

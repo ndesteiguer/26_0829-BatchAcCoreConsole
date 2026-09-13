@@ -1,6 +1,6 @@
 # Batch AcCoreConsole GUI — Functional Specification
 
-> **Scope authority:** [PRODUCT_SCOPE.md](PRODUCT_SCOPE.md) supersedes this document if a detail differs. The GUI implements a safe, observable execution workflow for user-vetted routines; it does not author or interpret them.
+> **Scope authority:** [PRODUCT_SCOPE.md](PRODUCT_SCOPE.md) supersedes this document if a detail differs. [EXECUTION_CONTRACT.md](EXECUTION_CONTRACT.md) defines execution-definition fields and lifecycle behavior. The GUI implements a safe, observable execution workflow for user-vetted routines; it does not author or interpret them.
 
 ## 1. Purpose
 
@@ -18,10 +18,11 @@ Every profile selects:
 - an execution type: `AutoLisp` or `Script`
 - a routine file path (`.lsp` or `.scr`)
 - an explicit LISP entry-point function when the execution type is `AutoLisp`
+- an optional shared input file when the selected LISP requires one
 - exactly one input method: `FileListPath` or `InputDirectory`
 - work and results directories
 
-Profiles also expose basic execution settings: recursive discovery, invalid-entry handling, worker count, timeout, save-after-run, retained generated launcher scripts, and per-job logs. If the selected routine accepts inputs or declares outputs, the profile records only the minimal values and output metadata necessary to invoke and report it; the GUI does not inspect routine source to derive those values.
+Profiles also expose basic execution settings: recursive discovery, invalid-entry handling, worker count, timeout, save-after-run, retained generated launcher scripts, and per-job logs. Catalog/profile metadata declares an input mode of `None` or shared input file, plus an output mode of `None`, `OnePerFile`, or `MultiLinePerFile`. The GUI records only the selected path and minimal output metadata necessary to invoke and report the routine; it does not inspect source or parse the input file to derive values.
 
 ### 2.2 Preflight
 
@@ -34,6 +35,7 @@ Required checks:
 | Core Console executable exists and is readable | Cannot run |
 | Selected routine file exists, is readable, and matches the selected execution type | Cannot run |
 | AutoLISP entry point is supplied for an AutoLISP profile | Cannot run |
+| Declared shared input file exists and is readable | Cannot run |
 | Exactly one input method is configured | Cannot run |
 | File-list entries or input-directory discovery produce drawings | Cannot run |
 | Required drawings are accessible `.dwg` files | Cannot run unless skip-invalid is enabled |
@@ -42,7 +44,7 @@ Required checks:
 | Save-after-run is enabled | Warning: drawings may be changed in place |
 | Mapped-drive paths are used | Warning: recommend a UNC path when access differs across processes |
 
-Preflight validates profile and filesystem conditions only. It does not prove that a routine is correct, Core Console-compatible, or safe for a specific drawing.
+Preflight validates profile and filesystem conditions only. It does not parse a shared input file or prove that a routine is correct, Core Console-compatible, or safe for a specific drawing.
 
 ### 2.3 Queue review
 

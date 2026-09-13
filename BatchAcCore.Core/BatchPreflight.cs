@@ -25,11 +25,28 @@ public static class BatchPreflight
     public static BatchPreflightReport Check(BatchSettings settings, string profileDirectory)
     {
         var diagnostics = new List<PreflightDiagnostic>();
+        var usesExecutionDefinition = !string.IsNullOrWhiteSpace(settings.ExecutionDefinitionPath);
+        ResolvedExecutionDefinition? executionDefinition = null;
         try
         {
-            settings.Normalize(profileDirectory);
+            if (usesExecutionDefinition)
+                executionDefinition = settings.NormalizeExecutionProfile(profileDirectory);
+            else
+                settings.Normalize(profileDirectory);
+
             diagnostics.Add(new(PreflightSeverity.Pass, "Core Console", $"Found executable: {settings.AcCoreConsolePath}"));
-            diagnostics.Add(new(PreflightSeverity.Pass, "AutoLISP routine", $"Validated one-argument function '{settings.RoutineFunction}' in: {settings.LispFilePath}"));
+            if (executionDefinition is null)
+                diagnostics.Add(new(PreflightSeverity.Pass, "AutoLISP routine", $"Validated one-argument function '{settings.RoutineFunction}' in: {settings.LispFilePath}"));
+            else
+            {
+                diagnostics.Add(new(PreflightSeverity.Pass, "Execution definition", $"Validated {FormatExecutionType(executionDefinition.Type)} routine: {executionDefinition.RoutinePath}"));
+                if (executionDefinition.RequiresSharedInputFile)
+                    diagnostics.Add(new(PreflightSeverity.Pass, "Shared input file", $"Found input file: {settings.SharedInputFilePath}"));
+                if (executionDefinition.ProducesOutput)
+                    diagnostics.Add(new(PreflightSeverity.Pass, "Routine output", $"Expected format: {executionDefinition.OutputFormat}. A fresh batch-output directory will be created when the batch starts."));
+                else
+                    diagnostics.Add(new(PreflightSeverity.Pass, "Routine output", "No routine output is declared; job success and failure are reported by the batch runner."));
+            }
             diagnostics.Add(new(PreflightSeverity.Pass, "Execution settings", $"Using {settings.WorkerCount} worker(s) with a {settings.TimeoutMinutes}-minute timeout."));
         }
         catch (Exception exception)
@@ -51,7 +68,9 @@ public static class BatchPreflight
             return new(settings, [], [], diagnostics);
         }
 
-        var selection = BatchRunner.SelectDrawingsForUniqueCsvOutputs(settings.WorkDirectory!, discoveredDrawings, settings.RoutineFunction);
+        var selection = executionDefinition is null
+            ? BatchRunner.SelectDrawingsForUniqueCsvOutputs(settings.WorkDirectory!, discoveredDrawings, settings.RoutineFunction)
+            : new DrawingSelection(discoveredDrawings, []);
         var drawings = selection.Drawings;
 
         if (discoveredDrawings.Length == 0)
@@ -59,7 +78,9 @@ public static class BatchPreflight
         else
             diagnostics.Add(new(PreflightSeverity.Pass, "Drawing input", $"Resolved {discoveredDrawings.Length} drawing(s); {drawings.Count} will be processed."));
 
-        if (selection.OmittedDrawings.Count > 0)
+        if (executionDefinition is not null)
+            diagnostics.Add(new(PreflightSeverity.Pass, "Output naming", "Routine-owned output filenames are collected from the fresh batch-output directory; no filename convention is required."));
+        else if (selection.OmittedDrawings.Count > 0)
         {
             var examples = string.Join(", ", selection.OmittedDrawings.Take(3).Select(duplicate => Path.GetFileName(duplicate.Drawing)));
             var remainder = selection.OmittedDrawings.Count > 3 ? $" (and {selection.OmittedDrawings.Count - 3} more)" : string.Empty;
@@ -87,6 +108,12 @@ public static class BatchPreflight
         var message = exception.Message;
         if (message.Contains("AcCoreConsolePath", StringComparison.OrdinalIgnoreCase))
             return "Core Console";
+        if (message.Contains("SharedInputFilePath", StringComparison.OrdinalIgnoreCase))
+            return "Shared input file";
+        if (message.Contains("ExecutionDefinitionPath", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("OutputFormat", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("Routine", StringComparison.OrdinalIgnoreCase))
+            return "Execution definition";
         if (message.Contains("LispFilePath", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("function '", StringComparison.OrdinalIgnoreCase))
             return "AutoLISP routine";
@@ -148,8 +175,18 @@ public static class BatchPreflight
             diagnostics.Add(new(PreflightSeverity.Warning, "Drawing changes", $"Could not read file attributes for {inaccessibleDrawings.Count} drawing(s). Save permission cannot be confirmed before the batch runs."));
     }
 
+    private static string FormatExecutionType(ExecutionType type) => type switch
+    {
+        ExecutionType.BlindScript => "blind-script",
+        ExecutionType.BlindLisp => "blind-lisp",
+        ExecutionType.LispResult => "lisp-result",
+        ExecutionType.LispReport => "lisp-report",
+        ExecutionType.LispInputReport => "lisp-input-report",
+        _ => throw new ArgumentOutOfRangeException(nameof(type), type, "Unsupported execution type.")
+    };
+
     private static bool UsesMappedDrive(BatchSettings settings) =>
-        new[] { settings.AcCoreConsolePath, settings.LispFilePath, settings.FileListPath, settings.InputDirectory, settings.WorkDirectory, settings.ResultsDirectory }
+        new[] { settings.AcCoreConsolePath, settings.ExecutionDefinitionPath, settings.ExecutionDefinition?.RoutinePath, settings.SharedInputFilePath, settings.LispFilePath, settings.FileListPath, settings.InputDirectory, settings.WorkDirectory, settings.ResultsDirectory }
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Any(IsNetworkDrive);
 
