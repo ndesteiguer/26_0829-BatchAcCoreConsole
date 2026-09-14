@@ -8,7 +8,7 @@ The application is an orchestration, safety, and reporting layer around known-go
 
 ## In scope
 
-- Select an AcCoreConsole executable, an AutoLISP routine with an explicit entry-point function, or a standalone `.scr` script.
+- Select an AcCoreConsole executable and a paired execution-definition JSON for an AutoLISP routine or standalone `.scr` script.
 - Resolve a drawing list or input directory into a reviewable queue, then execute the queue with configurable bounded concurrency.
 - Apply basic validation for profile values, required files, input drawings, output locations, worker limits, and timeouts.
 - Apply operational guardrails: per-worker Core Console isolation, dialog suppression where applicable, controlled saving, timeouts, cancellation of queued work, retained logs, and per-drawing/batch summaries.

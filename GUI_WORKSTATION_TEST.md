@@ -1,6 +1,6 @@
-# GUI Workstation Regression Checklist — Current Prototype
+# GUI Workstation Acceptance Checklist — Execution Definitions
 
-> **Scope authority:** [PRODUCT_SCOPE.md](PRODUCT_SCOPE.md) defines the target product. This checklist verifies the current LISP/CSV prototype only; it is not the acceptance specification for the future LISP-or-SCR execution model.
+> **Scope authority:** [PRODUCT_SCOPE.md](PRODUCT_SCOPE.md) defines the target product. [EXECUTION_CONTRACT.md](EXECUTION_CONTRACT.md) defines the routine-definition, argument, output, save, and quit conventions this checklist verifies.
 
 Use this checklist on a standard-user Windows workstation that has the matching x64 .NET Desktop Runtime and a licensed AutoCAD/Core Console installation. Do not run it against production-only drawings.
 
@@ -11,10 +11,11 @@ Use this checklist on a standard-user Windows workstation that has the matching 
     dotnet run --project .\BatchAcCore.Gui\BatchAcCore.Gui.csproj
 
 2. Confirm the application starts without elevation.
-3. Create a new profile. Confirm it defaults to `C:\Program Files\Autodesk\AutoCAD 2026\accoreconsole.exe`, 4 workers, a 10-minute timeout, and **Save drawings after successful processing** cleared; then enter the actual Core Console executable, AutoLISP file, drawing list or input directory, and output directories. This is a regression check for the prototype profile, not a target-model requirement.
-4. Confirm **Create per-job log files** is selected for a new profile. Clear it, save the profile, close/open it, and confirm the setting remains cleared.
-5. Save the profile in a user-writable folder, close/open it, and confirm the fields reload.
-6. If applicable, confirm an editable UNC path remains intact after saving and reopening.
+3. Create a new profile. Confirm it defaults to `C:\Program Files\Autodesk\AutoCAD 2026\accoreconsole.exe`, 4 workers, a 10-minute timeout, and **Save drawings after successful processing** cleared; then enter the actual Core Console executable, paired execution-definition JSON, drawing list or input directory, and output directories.
+4. Select each supplied execution definition in turn. Confirm the GUI displays its resolved type, routine, function when applicable, and output format when applicable. Confirm the **Shared input file** picker appears only for `lisp-input-report`.
+5. Confirm **Create per-job log files** is selected for a new profile. Clear it, save the profile, close/open it, and confirm the setting remains cleared.
+6. Save the profile in a user-writable folder, close/open it, and confirm the fields reload.
+7. If applicable, confirm an editable UNC path remains intact after saving and reopening.
 
 Expected: the GUI does not install software, request elevation, change AutoCAD profiles, or change AutoCAD trust/security settings.
 
@@ -36,23 +37,23 @@ Expected: the GUI does not install software, request elevation, change AutoCAD p
 6. Confirm any save-after-run and mapped-drive warnings are understandable.
 7. With **Save drawings after successful processing** selected, mark a disposable input DWG read-only in Windows. Run preflight and confirm it reports a warning—not an error—explaining that saving may fail. Restore the file attribute after the test.
 8. Run preflight from the Profile tab. Confirm the GUI automatically selects the **Preflight & Queue** tab.
-9. For a recursive input folder, place two disposable DWGs with the same filename in separate subfolders. Confirm preflight gives a CSV-output warning, retains one drawing for processing, and marks the other as Skipped in the queue.
+9. For an output-producing definition, confirm preflight reports the declared output format and fresh batch-output directory convention without requiring a source-file naming pattern.
 
 Expected: preflight performs no DWG processing and does not create the work/output folders solely by being run.
 
 ## 4. Representative batch
 
-1. Use copies of representative DWGs and an established Core Console-compatible LISP routine.
+1. Use copies of representative DWGs and each applicable established Core Console-compatible routine: blind SCR, blind LISP, one-output-per-file LISP, multi-line-report LISP, and shared-input report LISP.
 2. Run the GUI profile.
 3. Confirm queue rows change from queued to running and then terminal states.
 4. Confirm worker numbers, UTC timestamps, elapsed time, exit code, log path, and error details appear when applicable.
-5. Open a retained log, readable batch summary, and combined CSV from the GUI.
-6. Compare the result, generated CSVs, exit behavior, and summaries with the stable CLI run using the same profile.
-7. Repeat with **Create per-job log files** cleared. Confirm the job log path is empty/unavailable and no per-job `.log` files are created, while the batch summary and CSV behavior remain available.
-8. Complete the duplicate-filename batch from preflight step 9. Confirm the skipped drawing is listed in both the structured and readable summaries, and no CSV collision occurs.
+5. For an output-producing routine, confirm all routine-created output files remain in one fresh `batch-output-*` directory under WorkDirectory; no per-DWG directories or file moves occur.
+6. Confirm the output report states successful-DWG count versus found output-file count. Confirm CSV combines with one header and JSON combines as a JSON array; open the combined output from the GUI.
+7. Compare the result, generated outputs, exit behavior, and summaries with the CLI run using the same profile.
+8. Repeat with **Create per-job log files** cleared. Confirm the job log path is empty/unavailable and no per-job `.log` files are created, while the batch summary and output behavior remain available.
 9. Confirm the bottom status bar advances by completed drawing count, shows the number of active jobs while running, and ends at the total drawing count when the batch completes.
 
-Expected: the current prototype GUI and CLI produce equivalent batch artifacts and outcome. This does not impose compatibility requirements on the target-model profiles described in `PRODUCT_SCOPE.md`.
+Expected: the GUI and CLI produce equivalent execution-definition batch artifacts and outcome.
 
 ## 5. Cancellation
 
@@ -76,7 +77,7 @@ Expected: cancellation never force-terminates a Core Console process.
 7. Confirm the prompt asks: "Do you want to create a Failed-Only Rerun now?" Select **Yes** and confirm it opens the rerun-profile save dialog, writes the companion drawing list, clears prior preflight state, and loads the new rerun profile.
 8. Produce another failed, timed-out, or cancelled batch. At the prompt, select **No**, make several profile edits, and confirm the prompt does not reappear until another batch starts.
 9. Confirm the Run Output tab becomes **Run Output (Previous Run)**, shows the stale-results warning, and **Create Failed-Only Rerun** is disabled after editing.
-10. Confirm prior logs, batch summary, and CSV remain available after the profile change.
+10. Confirm prior logs, batch summary, and combined output remain available after the profile change.
 11. Run a new batch. Confirm the stale-results warning and the "Previous Run" tab label clear when the batch completes.
 
 ## Report back

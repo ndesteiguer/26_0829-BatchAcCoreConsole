@@ -14,6 +14,7 @@ try
     VerifyCurrentProfileDefaults();
     VerifySettingsChangeNotifications();
     VerifyExecutionDefinitionModels(workspace);
+    await VerifyRoutineOutputCollectionAsync(workspace);
     Console.WriteLine("All BatchAcCore verification checks passed.");
     return 0;
 }
@@ -212,6 +213,7 @@ static void VerifyExecutionDefinitionModels(string workspace)
         (FileName: "blind-lisp.execution.json", Json: "{\"type\":\"blind-lisp\",\"routine\":\"BlindLisp.lsp\",\"function\":\"c:RUN\"}", Type: ExecutionType.BlindLisp, Function: "c:RUN", OutputFormat: (string?)null),
         (FileName: "result.execution.json", Json: "{\"type\":\"lisp-result\",\"routine\":\"Result.lsp\",\"function\":\"RESULT\",\"outputFormat\":\"json\"}", Type: ExecutionType.LispResult, Function: "RESULT", OutputFormat: "json"),
         (FileName: "report.execution.json", Json: "{\"type\":\"lisp-report\",\"routine\":\"Report.lsp\",\"function\":\"REPORT\",\"outputFormat\":\"csv\"}", Type: ExecutionType.LispReport, Function: "REPORT", OutputFormat: "csv"),
+        (FileName: "artifact.execution.json", Json: "{\"type\":\"lisp-report\",\"routine\":\"Report.lsp\",\"function\":\"REPORT\",\"outputFormat\":\"xml\"}", Type: ExecutionType.LispReport, Function: "REPORT", OutputFormat: "xml"),
         (FileName: "input-report.execution.json", Json: "{\"type\":\"lisp-input-report\",\"routine\":\"InputReport.lsp\",\"function\":\"INPUTREPORT\",\"outputFormat\":\"csv\"}", Type: ExecutionType.LispInputReport, Function: "INPUTREPORT", OutputFormat: "csv")
     };
 
@@ -303,6 +305,32 @@ static void VerifyExecutionDefinitionModels(string workspace)
     var invalidDefinitionPath = Path.Combine(definitionsDirectory, "invalid.execution.json");
     File.WriteAllText(invalidDefinitionPath, "{\"type\":\"lisp-report\",\"routine\":\"Report.lsp\",\"outputFormat\":\"csv\"}");
     AssertThrows(() => ExecutionDefinition.Load(invalidDefinitionPath), "A LISP execution definition without Function must fail validation.");
+}
+
+static async Task VerifyRoutineOutputCollectionAsync(string workspace)
+{
+    var routineOutputDirectory = Path.Combine(workspace, "routine-output");
+    var resultsDirectory = Path.Combine(workspace, "combined-output");
+    Directory.CreateDirectory(Path.Combine(routineOutputDirectory, "nested"));
+    File.WriteAllText(Path.Combine(routineOutputDirectory, "first.json"), "{\"drawing\":\"first\"}");
+    File.WriteAllText(Path.Combine(routineOutputDirectory, "nested", "second.json"), "[{\"drawing\":\"second\"}]");
+    File.WriteAllText(Path.Combine(routineOutputDirectory, "ignored.txt"), "not routine output");
+
+    var jsonFiles = BatchRunner.FindRoutineOutputFiles(routineOutputDirectory, "json");
+    Assert(jsonFiles.Count == 2, "Routine output collection must find only declared-format files, including nested routine-created folders.");
+    var combinedJsonPath = await BatchRunner.CombineOutputFilesAsync(resultsDirectory, "json", jsonFiles);
+    using (var combinedJson = JsonDocument.Parse(File.ReadAllText(combinedJsonPath)))
+    {
+        Assert(combinedJson.RootElement.ValueKind == JsonValueKind.Array && combinedJson.RootElement.GetArrayLength() == 2, "Combined JSON output must be a valid array containing one element per routine output file.");
+    }
+
+    File.WriteAllText(Path.Combine(routineOutputDirectory, "first.csv"), "Drawing,Value\nfirst,1\n");
+    File.WriteAllText(Path.Combine(routineOutputDirectory, "second.csv"), "Drawing,Value\nsecond,2\n");
+    var csvFiles = BatchRunner.FindRoutineOutputFiles(routineOutputDirectory, "csv");
+    var combinedCsvPath = await BatchRunner.CombineOutputFilesAsync(resultsDirectory, "csv", csvFiles);
+    var csvLines = File.ReadAllLines(combinedCsvPath);
+    Assert(csvLines.SequenceEqual(["Drawing,Value", "first,1", "second,2"]), "Combined CSV output must retain one header and all data rows.");
+    Assert(!BatchRunner.IsSupportedOutputFormat("xml"), "An unsupported declared format must be reported as an artifact rather than sent to a CSV or JSON combiner.");
 }
 
 static void AssertThrows(Action action, string message)

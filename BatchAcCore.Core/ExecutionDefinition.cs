@@ -110,8 +110,10 @@ public sealed class ExecutionDefinition
         }
 
         var normalized = outputFormat.Trim();
-        if (!string.Equals(normalized, normalized.ToLowerInvariant(), StringComparison.Ordinal) || normalized is not ("csv" or "json"))
-            throw new ArgumentException("OutputFormat must be one of: csv, json.");
+        if (!string.Equals(normalized, normalized.ToLowerInvariant(), StringComparison.Ordinal) ||
+            normalized.Length > 16 ||
+            normalized.Any(character => !char.IsAsciiLetterOrDigit(character)))
+            throw new ArgumentException("OutputFormat must be a lowercase file extension containing only letters and digits.");
         if (!required)
             throw new ArgumentException("OutputFormat is valid only for output-producing LISP execution types.");
         return normalized;

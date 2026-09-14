@@ -34,7 +34,7 @@ The definition refers to the routine by a path relative to its own location. No 
 | `type` | All definitions | One of the five execution types above. The type fixes the argument convention. |
 | `routine` | All definitions | Relative path to the paired `.lsp` or `.scr` file. |
 | `function` | LISP definitions | Explicit named LISP entry point. |
-| `outputFormat` | Output-producing LISP definitions | Lowercase output format, initially `csv` or `json`. |
+| `outputFormat` | Output-producing LISP definitions | Lowercase file extension (letters/digits only), such as `csv`, `json`, `xml`, or `log`. |
 
 There are no argument arrays, output filename templates, input labels, input-extension lists, source-code headers, or dependency declarations in v1.
 
@@ -120,7 +120,7 @@ Initial supported formats:
 - `csv`: combine files with matching headers into one CSV.
 - `json`: combine valid per-file JSON values into one JSON array.
 
-Other formats can be added only with an explicit, tested combiner.
+Other formats are counted and reported as found artifacts in the batch-output directory, but are not combined until an explicit, tested combiner is added.
 
 ## Execution lifecycle
 

@@ -1,21 +1,21 @@
 # Batch AcCoreConsole
 
-Windows command-line runner for applying an AutoLISP routine to many DWG files in parallel through `accoreconsole.exe`.
+Windows command-line runner for applying vetted AutoLISP routines or scripts to many DWG files in parallel through `accoreconsole.exe`.
 
 The intended product direction and boundaries for the next development stage are documented in [PRODUCT_SCOPE.md](PRODUCT_SCOPE.md).
 
 ## Workflow
 
 1. Put one DWG path per line in `drawings.txt` (blank lines and lines beginning with `#` are ignored), or configure `InputDirectory` to discover DWGs.
-2. Make the LISP routine callable without UI. Its filename and exported one-argument function must match—for example, `REFREPORTCSV.lsp` must define `REFREPORTCSV`.
-3. Copy `settings.example.json` to `settings.json` and supply the AutoCAD, LISP, input, and worker settings. Use **either** `FileListPath` or `InputDirectory`. New profiles default to AutoCAD 2026 Core Console, four workers, a ten-minute timeout, no drawing save, and per-job logs enabled.
+2. Keep each routine beside its paired execution-definition JSON. The JSON declares the execution type, routine path, callable LISP function when applicable, and output format when applicable. See [EXECUTION_CONTRACT.md](EXECUTION_CONTRACT.md).
+3. Copy `settings.example.json` to `settings.json` and supply the AutoCAD, execution-definition, input, and worker settings. Use **either** `FileListPath` or `InputDirectory`. Add `SharedInputFilePath` only for `lisp-input-report`. New profiles default to AutoCAD 2026 Core Console, four workers, a ten-minute timeout, no drawing save, and per-job logs enabled.
 4. Run:
 
    ```powershell
    dotnet run --project . -- settings.json
    ```
 
-The runner validates `AcCoreConsolePath`, `LispFilePath`, and `FileListPath` (when used) as existing files before any drawing is processed. `LispFilePath` must point to a `.lsp` file whose filename (without `.lsp`) is the function to run. The runner verifies that the file contains a standard `defun` for that function with exactly one argument (local variables after `/` are ignored). Blank and comment rows in `FileListPath` are always ignored. By default, every other entry must point to an existing `.dwg` file and invalid entries are reported before processing starts. Set `SkipInvalidFileListEntries` to `true` to silently skip invalid entries instead. It creates `WorkDirectory` and `ResultsDirectory` when needed.
+The runner validates `AcCoreConsolePath`, `ExecutionDefinitionPath`, the paired routine, `SharedInputFilePath` when required, and `FileListPath` when used before any drawing is processed. It does not interpret or author scripts or LISP files. Blank and comment rows in `FileListPath` are always ignored. By default, every other entry must point to an existing `.dwg` file and invalid entries are reported before processing starts. Set `SkipInvalidFileListEntries` to `true` to silently skip invalid entries instead. It creates `WorkDirectory` and `ResultsDirectory` when needed.
 
 For framework-dependent Windows deployment, publish a 64-bit CLI application folder:
 
@@ -76,35 +76,31 @@ For every drawing, the runner creates a unique temporary `.scr`, launches:
 accoreconsole.exe /i "drawing.dwg" /s "unique-job.scr"
 ```
 
-The script disables dialogs, loads your `.lsp`, evaluates the function derived from its filename with `WorkDirectory` as its one argument, optionally saves, writes a plain AutoLISP completion marker, and exits AutoCAD. It deliberately contains no `vl-`, `vla-`, or `vlax-` calls for Core Console compatibility. If the routine errors before it reaches the marker, the runner marks that drawing as failed. If the LISP cannot be loaded—for example, because its folder is untrusted—the runner records `Lisp routine failed to load.` even if Core Console exits with code 0. That batch-wide failure prevents queued drawings from starting; drawings already running finish safely, and CSV combination is skipped. By default, scripts are written to the temporary batch root and deleted after execution. Set `KeepScripts` to `true` only when troubleshooting; retained scripts are then written to `WorkDirectory`.
+The generated launcher disables dialogs, dispatches the configured execution type and arguments, optionally saves, writes a plain AutoLISP completion marker, and exits AutoCAD. It deliberately contains no `vl-`, `vla-`, or `vlax-` calls for Core Console compatibility. If the routine errors before it reaches the marker, the runner marks that drawing as failed. If a LISP cannot be loaded—for example, because its folder is untrusted—the runner records `Lisp routine failed to load.` even if Core Console exits with code 0. That batch-wide failure prevents queued drawings from starting; drawings already running finish safely, and output combination is skipped. By default, generated launchers are written to the temporary batch root and deleted after execution. Set `KeepScripts` to `true` only when troubleshooting; retained launchers are then written to `WorkDirectory`.
 
 Each batch creates a temporary root under the Windows temporary directory, for example `%TEMP%\BatchAcCoreConsole-<unique-batch-id>`. Each worker runs Core Console with its isolated profile in a `worker-<n>` subfolder, and the short-lived per-drawing completion markers and default transient scripts are written directly in the temporary root. The entire temporary root is removed after the batch finishes, even when `KeepScripts` is `true`, and remains outside `WorkDirectory` so its files do not mix with retained batch artifacts or ordinary folder synchronization.
 
-Each batch writes a timestamped `summary-*.json` file in `WorkDirectory`. By default, a separate stdout/stderr `.log` is also retained for each job. Set `CreateLogFiles` to `false` in `settings.json` to discard that output after it is drained, avoiding per-job log files and their synchronization events. A batch-wide LISP load failure records queued drawings as `Skipped`. Exit code 1 means a drawing failed, queued work was cancelled, the LISP failed to load, or CSV combination failed. Drawings deliberately omitted for duplicate derived CSV output names are reported as `Skipped` but do not independently cause a nonzero exit code.
+Each batch writes a timestamped `summary-*.json` file in `WorkDirectory`. By default, a separate stdout/stderr `.log` is also retained for each job. Set `CreateLogFiles` to `false` in `settings.json` to discard that output after it is drained, avoiding per-job log files and their synchronization events. A batch-wide LISP load failure records queued drawings as `Skipped`. Exit code 1 means a drawing failed, queued work was cancelled, the LISP failed to load, an output count did not match successful DWGs, or output combination failed.
 
-## Results directory and combined CSV output
+## Results directory and combined routine output
 
-Set `ResultsDirectory` to the folder where completed-batch artifacts should be written. It receives the final combined CSV, readable batch summary, and future result file types. Every routine must write one CSV per drawing using `<drawing name without extension>.<function name>.csv`, where the function name is derived from `LispFilePath`. After the batch ends, the runner combines each expected CSV that was created or updated in `WorkDirectory` into a timestamped `combined-*.csv` containing one header row and every data row. It reports missing expected CSVs but still writes the combined output from those found. The combined CSV is not created when no expected CSV files are found or the source CSV headers differ. The directory also receives a timestamped `batch-summary-*.txt` file with every successful, failed, and skipped drawing, batch-level issues, effective settings, and approximate elapsed runtime for the run.
+Set `ResultsDirectory` to the folder where completed-batch artifacts should be written. It receives a combined routine output and readable batch summary. For `lisp-result`, `lisp-report`, and `lisp-input-report`, the runner creates one unique `batch-output-*` directory inside `WorkDirectory` and passes that same directory to every routine invocation. The routine owns its filenames and leaves its per-DWG output files there. After the batch ends, the runner counts matching files against successful DWGs, reports the expected-versus-found count, and combines supported formats into `ResultsDirectory`: CSV files become a single header-preserving CSV, and JSON files become one JSON array containing each source document. Other declared formats are reported as found artifacts and remain in the batch-output directory until a dedicated combiner is added. An output-count mismatch or failed supported-format combination causes a nonzero batch result. The directory also receives a timestamped `batch-summary-*.txt` file with every successful, failed, and skipped drawing, output counts, batch-level issues, effective settings, and approximate elapsed runtime for the run.
 
-## AutoLISP output directory
+## Execution definitions and routine arguments
 
-The function name comes from `LispFilePath`; it is not configured separately. It must accept one string argument: the output directory. The runner constructs the AutoLISP expression, escaping and converting the resolved `WorkDirectory` to forward slashes. For this configuration:
+The profile selects the paired execution JSON rather than a raw LISP file or function name. The runner resolves the JSON and generates the Core Console launcher as follows:
 
-```json
-"LispFilePath": "C:\\BatchJobs\\PROCESSDRAWING.lsp",
-"WorkDirectory": "C:\\BatchJobs\\work"
-```
+- `blind-script`: runs the `.scr` without arguments.
+- `blind-lisp`: loads the `.lsp` and calls its configured function without arguments.
+- `lisp-result` and `lisp-report`: pass the fresh batch-output directory as the function’s only argument.
+- `lisp-input-report`: passes `SharedInputFilePath` first, then the fresh batch-output directory.
 
-the generated script evaluates:
-
-```lisp
-(PROCESSDRAWING "C:/BatchJobs/work")
-```
+The application owns optional saving, the completion marker, and Core Console quit. User routines must not save or quit.
 
 ## Operational notes
 
 - Start with `WorkerCount: 1` to validate the LISP routine, then increase gradually. AutoCAD instances consume substantial RAM; 2–4 is usually a sensible starting point.
 - The routine must be non-interactive: no selection prompts, dialogs, or input requests. Use full paths for any files it reads/writes.
-- When multiple input drawings derive the same CSV name, the first resolved input is processed and later duplicates are skipped. Preflight and both batch summaries identify the omissions; rename or explicitly list drawings if a different one should be retained.
+- Output-producing routines should create one declared-format output file per successful DWG in the supplied batch-output directory. The runner reports a count mismatch but does not inspect the routine’s contents or naming convention.
 - Test on copies first. `SaveAfterRun` defaults to `false`; when enabled, the DWG is saved in place after the routine returns.
 - A nonzero AcCoreConsole exit code or an elapsed `TimeoutMinutes` marks only that job failed; the other workers continue.

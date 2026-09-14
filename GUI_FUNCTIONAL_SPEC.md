@@ -15,14 +15,12 @@ The user can create, open, edit, save, duplicate, and validate a JSON execution 
 Every profile selects:
 
 - `AcCoreConsolePath`
-- an execution type: `AutoLisp` or `Script`
-- a routine file path (`.lsp` or `.scr`)
-- an explicit LISP entry-point function when the execution type is `AutoLisp`
-- an optional shared input file when the selected LISP requires one
+- `ExecutionDefinitionPath`, pointing to the JSON paired with the routine
+- `SharedInputFilePath` only when the resolved definition is `lisp-input-report`
 - exactly one input method: `FileListPath` or `InputDirectory`
 - work and results directories
 
-Profiles also expose basic execution settings: recursive discovery, invalid-entry handling, worker count, timeout, save-after-run, retained generated launcher scripts, and per-job logs. Catalog/profile metadata declares an input mode of `None` or shared input file, plus an output mode of `None`, `OnePerFile`, or `MultiLinePerFile`. The GUI records only the selected path and minimal output metadata necessary to invoke and report the routine; it does not inspect source or parse the input file to derive values.
+Profiles also expose basic execution settings: recursive discovery, invalid-entry handling, worker count, timeout, save-after-run, retained generated launcher scripts, and per-job logs. The GUI reads the selected definition to display its type, routine, function, and output format; it does not inspect source or parse the input file to derive values.
 
 ### 2.2 Preflight
 
@@ -33,8 +31,8 @@ Required checks:
 | Check | Outcome when it fails |
 |---|---|
 | Core Console executable exists and is readable | Cannot run |
-| Selected routine file exists, is readable, and matches the selected execution type | Cannot run |
-| AutoLISP entry point is supplied for an AutoLISP profile | Cannot run |
+| Execution-definition JSON is valid and its paired routine exists with the required extension | Cannot run |
+| Explicit LISP entry point and output format required by the definition are supplied | Cannot run |
 | Declared shared input file exists and is readable | Cannot run |
 | Exactly one input method is configured | Cannot run |
 | File-list entries or input-directory discovery produce drawings | Cannot run |
@@ -59,7 +57,7 @@ The run screen shows a persistent overview and one row per drawing:
 - Assigned worker number while running
 - Start time, finish time, elapsed time, and process exit code when available
 - Error summary and corresponding log
-- Optional routine-result message and declared output paths when available
+- Declared output format, expected-versus-found output count, batch-output directory, and combined artifact when available
 
 The total succeeded, failed, running, and queued count updates as jobs end. The application always retains its structured summary and configured logs. A routine may create no output. When a profile declares compatible per-drawing outputs, the application combines them and records either the combined artifact or a combination issue.
 

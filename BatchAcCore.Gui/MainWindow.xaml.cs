@@ -31,12 +31,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string? _completedRunProfileSnapshot;
     private bool _isResultsStale;
     private bool _failedRerunPromptDismissed;
+    private string _executionDetails = "Choose an execution definition JSON to inspect its routine contract.";
+    private bool _requiresSharedInputFile;
 
     public MainWindow()
     {
         InitializeComponent();
         Settings.PropertyChanged += Settings_PropertyChanged;
         DataContext = this;
+        RefreshExecutionDefinitionInfo();
     }
 
     public BatchSettings Settings
@@ -54,6 +57,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _settings.PropertyChanged += Settings_PropertyChanged;
             OnPropertyChanged(nameof(IsFileListInput));
             OnPropertyChanged(nameof(IsInputDirectoryInput));
+            RefreshExecutionDefinitionInfo();
         }
     }
 
@@ -71,7 +75,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             OnPropertyChanged(nameof(CanCreateRerun));
             OnPropertyChanged(nameof(CanOpenSelectedLog));
             OnPropertyChanged(nameof(CanOpenBatchSummary));
-            OnPropertyChanged(nameof(CanOpenCombinedCsv));
+            OnPropertyChanged(nameof(CanOpenCombinedOutput));
         }
     }
 
@@ -80,7 +84,17 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public bool CanCreateRerun => CanEdit && !IsResultsStale && _lastRun is not null && _lastRun.Jobs.Any(job => job.Status is "Failed" or "TimedOut" or "Cancelled");
     public bool CanOpenSelectedLog => CanEdit && File.Exists(SelectedQueueItem?.LogPath);
     public bool CanOpenBatchSummary => CanEdit && File.Exists(_lastRun?.ReadableSummaryPath);
-    public bool CanOpenCombinedCsv => CanEdit && File.Exists(_lastRun?.CombinedCsvPath);
+    public bool CanOpenCombinedOutput => CanEdit && File.Exists(_lastRun?.CombinedOutputPath);
+    public string ExecutionDetails
+    {
+        get => _executionDetails;
+        private set => SetField(ref _executionDetails, value);
+    }
+    public bool RequiresSharedInputFile
+    {
+        get => _requiresSharedInputFile;
+        private set => SetField(ref _requiresSharedInputFile, value);
+    }
     public bool IsFileListInput
     {
         get => _isFileListInput;
@@ -159,8 +173,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void NewProfile_Click(object sender, RoutedEventArgs e)
     {
         if (!ConfirmProfileEdit()) return;
-        Settings = CreateNewSettings();
         _profilePath = null;
+        Settings = CreateNewSettings();
         ClearRunState();
         RunSummary = "New profile. Enter the required paths, then run preflight.";
     }
@@ -175,8 +189,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             var loaded = JsonSerializer.Deserialize<BatchSettings>(File.ReadAllText(dialog.FileName));
             if (loaded is null) throw new InvalidOperationException("The profile is empty.");
-            Settings = loaded;
             _profilePath = dialog.FileName;
+            Settings = loaded;
             ClearRunState();
             RunSummary = "Loaded profile: " + _profilePath;
         }
@@ -202,8 +216,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void BrowseCoreConsole_Click(object sender, RoutedEventArgs e) =>
         ChooseFile("Executables (*.exe)|*.exe|All files (*.*)|*.*", path => Settings.AcCoreConsolePath = path);
 
-    private void BrowseLisp_Click(object sender, RoutedEventArgs e) =>
-        ChooseFile("AutoLISP routines (*.lsp)|*.lsp|All files (*.*)|*.*", path => Settings.LispFilePath = path);
+    private void BrowseExecutionDefinition_Click(object sender, RoutedEventArgs e) =>
+        ChooseFile("Execution definitions (*.execution.json;*.json)|*.execution.json;*.json|All files (*.*)|*.*", path => Settings.ExecutionDefinitionPath = path);
+
+    private void BrowseSharedInputFile_Click(object sender, RoutedEventArgs e) =>
+        ChooseFile("All files (*.*)|*.*", path => Settings.SharedInputFilePath = path);
 
     private void BrowseDrawingList_Click(object sender, RoutedEventArgs e) =>
         ChooseFile("Drawing lists (*.txt)|*.txt|All files (*.*)|*.*", path => Settings.FileListPath = path);
@@ -219,7 +236,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void OpenSelectedLog_Click(object sender, RoutedEventArgs e) => OpenArtifact(SelectedQueueItem?.LogPath, "job log");
     private void OpenBatchSummary_Click(object sender, RoutedEventArgs e) => OpenArtifact(_lastRun?.ReadableSummaryPath, "batch summary");
-    private void OpenCombinedCsv_Click(object sender, RoutedEventArgs e) => OpenArtifact(_lastRun?.CombinedCsvPath, "combined CSV");
+    private void OpenCombinedOutput_Click(object sender, RoutedEventArgs e) => OpenArtifact(_lastRun?.CombinedOutputPath, "combined output");
 
     private void CreateRerun_Click(object sender, RoutedEventArgs e) => CreateFailedOnlyRerun();
 
@@ -257,8 +274,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             File.WriteAllLines(drawingListPath, drawings);
             File.WriteAllText(dialog.FileName, JsonSerializer.Serialize(rerunSettings, ProfileJsonOptions));
 
-            Settings = rerunSettings;
             _profilePath = dialog.FileName;
+            Settings = rerunSettings;
             ClearRunState();
             RunPreflight();
             RunSummary = "Created a separate failed-only rerun profile and drawing list. The original profile was not changed.";
@@ -288,7 +305,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _failedRerunPromptDismissed = false;
         OnPropertyChanged(nameof(CanCreateRerun));
         OnPropertyChanged(nameof(CanOpenBatchSummary));
-        OnPropertyChanged(nameof(CanOpenCombinedCsv));
+        OnPropertyChanged(nameof(CanOpenCombinedOutput));
         IsRunning = true;
         OutputText = string.Empty;
         _cancellation = new CancellationTokenSource();
@@ -306,8 +323,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             _failedRerunPromptDismissed = false;
             OnPropertyChanged(nameof(CanCreateRerun));
             OnPropertyChanged(nameof(CanOpenBatchSummary));
-            OnPropertyChanged(nameof(CanOpenCombinedCsv));
-            RunSummary = "Batch completed with exit code " + _lastRun.ExitCode + ". " + BuildQueueSummary();
+            OnPropertyChanged(nameof(CanOpenCombinedOutput));
+            RunSummary = BuildRunSummary(_lastRun);
         }
         catch (Exception exception)
         {
@@ -425,12 +442,53 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void Settings_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         OnPropertyChanged(nameof(Settings));
+        if (e.PropertyName is nameof(BatchSettings.ExecutionDefinitionPath) or nameof(BatchSettings.SharedInputFilePath))
+            RefreshExecutionDefinitionInfo();
         if (_lastRun is null || IsRunning) return;
 
         var differsFromCompletedRun = !string.Equals(_completedRunProfileSnapshot, SerializeSettings(), StringComparison.Ordinal);
         if (differsFromCompletedRun && !_failedRerunPromptDismissed && HasFailedOnlyRerunAvailable() && !ConfirmProfileEdit()) return;
 
         IsResultsStale = differsFromCompletedRun;
+    }
+
+    private void RefreshExecutionDefinitionInfo()
+    {
+        if (string.IsNullOrWhiteSpace(Settings.ExecutionDefinitionPath))
+        {
+            RequiresSharedInputFile = false;
+            ExecutionDetails = "Choose an execution definition JSON to inspect its routine contract.";
+            return;
+        }
+
+        try
+        {
+            var baseDirectory = _profilePath is null ? Environment.CurrentDirectory : Path.GetDirectoryName(_profilePath)!;
+            var definitionPath = Path.IsPathFullyQualified(Settings.ExecutionDefinitionPath)
+                ? Settings.ExecutionDefinitionPath
+                : Path.Combine(baseDirectory, Settings.ExecutionDefinitionPath);
+            var definition = ExecutionDefinition.Load(definitionPath);
+            RequiresSharedInputFile = definition.RequiresSharedInputFile;
+            if (!definition.RequiresSharedInputFile)
+                Settings.SharedInputFilePath = null;
+
+            var function = definition.Function is null ? string.Empty : $"; function {definition.Function}";
+            var output = definition.OutputFormat is null ? string.Empty : $"; {definition.OutputFormat} output";
+            ExecutionDetails = $"{definition.Type}: {definition.RoutinePath}{function}{output}";
+        }
+        catch (Exception exception)
+        {
+            RequiresSharedInputFile = false;
+            ExecutionDetails = "Definition not resolved: " + exception.Message;
+        }
+    }
+
+    private string BuildRunSummary(BatchRunResult result)
+    {
+        var output = result.OutputFormat is null
+            ? string.Empty
+            : $" Output: expected {result.ExpectedOutputCount}, found {result.FoundOutputCount} {result.OutputFormat} file(s).";
+        return "Batch completed with exit code " + result.ExitCode + ". " + BuildQueueSummary() + output;
     }
 
     private string SerializeSettings() => JsonSerializer.Serialize(Settings, ProfileJsonOptions);
@@ -569,7 +627,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OnPropertyChanged(nameof(CanCreateRerun));
         OnPropertyChanged(nameof(CanOpenSelectedLog));
         OnPropertyChanged(nameof(CanOpenBatchSummary));
-        OnPropertyChanged(nameof(CanOpenCombinedCsv));
+        OnPropertyChanged(nameof(CanOpenCombinedOutput));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

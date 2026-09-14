@@ -60,7 +60,7 @@ public static class BatchRunner
         if (args.Length != 1 || args[0] is "--help" or "-h")
         {
             output.WriteLine("Usage: BatchAcCoreConsole <settings.json>");
-            output.WriteLine("Copy settings.example.json, set the paths and run this command.");
+            output.WriteLine("Copy settings.example.json, set ExecutionDefinitionPath and the batch paths, then run this command.");
             return new(args.Length == 1 ? 0 : 2, [], null, null, null, [], false);
         }
 
@@ -119,6 +119,15 @@ public static class BatchRunner
         {
             Directory.CreateDirectory(batchOutputDirectory);
             output.WriteLine($"Routine output directory: {batchOutputDirectory}");
+        }
+        if (executionDefinition is not null)
+        {
+            output.WriteLine($"Execution type: {executionDefinition.Type}");
+            output.WriteLine($"Routine: {executionDefinition.RoutinePath}");
+            if (executionDefinition.Function is not null)
+                output.WriteLine($"Function: {executionDefinition.Function}");
+            if (executionDefinition.RequiresSharedInputFile)
+                output.WriteLine($"Shared input file: {settings.SharedInputFilePath}");
         }
         output.WriteLine($"Queued {drawings.Count} drawing(s), using {settings.WorkerCount} worker(s).");
         if (selection.OmittedDrawings.Count > 0)
@@ -193,8 +202,10 @@ public static class BatchRunner
         var cancelled = ordered.Count(result => result.Status == "Cancelled");
         var failed = ordered.Length - succeeded - skipped - cancelled;
         var elapsedRuntime = ordered.Max(result => result.FinishedUtc) - ordered.Min(result => result.StartedUtc);
-        string? combinedCsvPath = null;
+        string? combinedOutputPath = null;
         string? combinationError = null;
+        int? expectedOutputCount = null;
+        int? foundOutputCount = null;
         var issues = new List<string>();
         if (executionDefinition is null)
         {
@@ -221,8 +232,8 @@ public static class BatchRunner
 
                 try
                 {
-                    combinedCsvPath = await CombineCsvFilesAsync(settings.ResultsDirectory!, batchCsvFiles);
-                    output.WriteLine($"Combined CSV: {combinedCsvPath}");
+                    combinedOutputPath = await CombineCsvFilesAsync(settings.ResultsDirectory!, batchCsvFiles);
+                    output.WriteLine($"Combined CSV: {combinedOutputPath}");
                 }
                 catch (Exception exception)
                 {
@@ -233,6 +244,40 @@ public static class BatchRunner
                 }
             }
         }
+        else if (executionDefinition.ProducesOutput)
+        {
+            var outputFormat = executionDefinition.OutputFormat!;
+            var outputFiles = FindRoutineOutputFiles(batchOutputDirectory!, outputFormat).ToArray();
+            expectedOutputCount = succeeded;
+            foundOutputCount = outputFiles.Length;
+            output.WriteLine($"Routine outputs: expected {expectedOutputCount}, found {foundOutputCount} {outputFormat} file(s).");
+            if (foundOutputCount != expectedOutputCount)
+            {
+                combinationError = $"Expected {expectedOutputCount} {outputFormat} output file(s) from successful drawings, but found {outputFiles.Length} in the batch output directory.";
+                issues.Add(combinationError);
+                output.WriteError(combinationError);
+            }
+
+            if (outputFiles.Length > 0 && IsSupportedOutputFormat(outputFormat))
+            {
+                try
+                {
+                    combinedOutputPath = await CombineOutputFilesAsync(settings.ResultsDirectory!, outputFormat, outputFiles);
+                    output.WriteLine($"Combined {outputFormat.ToUpperInvariant()}: {combinedOutputPath}");
+                }
+                catch (Exception exception)
+                {
+                    combinationError = combinationError is null ? exception.Message : $"{combinationError}{Environment.NewLine}{exception.Message}";
+                    var issue = $"{outputFormat.ToUpperInvariant()} combination failed: {exception.Message}";
+                    issues.Add(issue);
+                    output.WriteError(issue);
+                }
+            }
+            else if (outputFiles.Length > 0)
+            {
+                output.WriteLine($"No combiner is configured for '{outputFormat}'. Found routine output files remain in: {batchOutputDirectory}");
+            }
+        }
 
         var summaryPath = Path.Combine(settings.WorkDirectory!, $"summary-{DateTime.UtcNow:yyyyMMddHHmmssfff}.json");
         await File.WriteAllTextAsync(summaryPath, JsonSerializer.Serialize(ordered, JsonOptions));
@@ -241,7 +286,7 @@ public static class BatchRunner
         try
         {
             Directory.CreateDirectory(settings.ResultsDirectory!);
-            await File.WriteAllTextAsync(readableSummaryCandidate, BuildReadableSummary(settings, executionDefinition, batchOutputDirectory, ordered, succeeded, failed, skipped, cancelled, elapsedRuntime, combinedCsvPath, issues, summaryPath));
+            await File.WriteAllTextAsync(readableSummaryCandidate, BuildReadableSummary(settings, executionDefinition, batchOutputDirectory, expectedOutputCount, foundOutputCount, ordered, succeeded, failed, skipped, cancelled, elapsedRuntime, combinedOutputPath, issues, summaryPath));
             readableSummaryPath = readableSummaryCandidate;
             output.WriteLine($"Batch summary: {readableSummaryPath}");
         }
@@ -256,7 +301,13 @@ public static class BatchRunner
         output.WriteLine(completionMessage);
         Report(progress, BatchEventKind.BatchCompleted, status: cancelled > 0 ? "Cancelled" : "Completed", message: $"{succeeded} succeeded, {failed} failed, {skipped} skipped, {cancelled} cancelled.");
         var exitCode = failed == 0 && cancelled == 0 && Volatile.Read(ref lispLoadFailureDetected) == 0 && combinationError is null ? 0 : 1;
-        return new(exitCode, ordered, summaryPath, readableSummaryPath, combinedCsvPath, issues, cancelled > 0);
+        return new(exitCode, ordered, summaryPath, readableSummaryPath, combinedOutputPath, issues, cancelled > 0)
+        {
+            BatchOutputDirectory = batchOutputDirectory,
+            ExpectedOutputCount = expectedOutputCount,
+            FoundOutputCount = foundOutputCount,
+            OutputFormat = executionDefinition?.OutputFormat
+        };
     }
 
     private static async Task<JobResult> RunJobAsync(
@@ -488,6 +539,25 @@ public static class BatchRunner
         return new(file.Length, file.LastWriteTimeUtc);
     }
 
+    internal static IReadOnlyList<string> FindRoutineOutputFiles(string batchOutputDirectory, string outputFormat)
+    {
+        if (!Directory.Exists(batchOutputDirectory)) return [];
+        return Directory
+            .EnumerateFiles(batchOutputDirectory, $"*.{outputFormat}", SearchOption.AllDirectories)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    internal static Task<string> CombineOutputFilesAsync(string outputDirectory, string outputFormat, IReadOnlyList<string> inputPaths) =>
+        outputFormat switch
+        {
+            "csv" => CombineCsvFilesAsync(outputDirectory, inputPaths),
+            "json" => CombineJsonFilesAsync(outputDirectory, inputPaths),
+            _ => throw new ArgumentException($"No output combiner is available for format '{outputFormat}'.")
+        };
+
+    internal static bool IsSupportedOutputFormat(string outputFormat) => outputFormat is "csv" or "json";
+
     private static async Task<string> CombineCsvFilesAsync(string outputDirectory, IReadOnlyList<string> inputPaths)
     {
         if (inputPaths.Count == 0)
@@ -523,6 +593,50 @@ public static class BatchRunner
                 }
             }
 
+            File.Move(temporaryPath, outputPath);
+            return outputPath;
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+        }
+    }
+
+    private static async Task<string> CombineJsonFilesAsync(string outputDirectory, IReadOnlyList<string> inputPaths)
+    {
+        if (inputPaths.Count == 0)
+            throw new InvalidOperationException("No JSON files were found for this batch.");
+
+        Directory.CreateDirectory(outputDirectory);
+        var outputPath = Path.Combine(outputDirectory, $"combined-{DateTime.UtcNow:yyyyMMddHHmmssfff}.json");
+        var temporaryPath = Path.Combine(outputDirectory, $".{Path.GetFileName(outputPath)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            await using (var writer = new StreamWriter(temporaryPath, append: false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+            {
+                await writer.WriteLineAsync("[");
+                for (var index = 0; index < inputPaths.Count; index++)
+                {
+                    JsonDocument document;
+                    try
+                    {
+                        document = JsonDocument.Parse(await File.ReadAllTextAsync(inputPaths[index]));
+                    }
+                    catch (JsonException exception)
+                    {
+                        throw new InvalidOperationException($"JSON output file is invalid: {inputPaths[index]}", exception);
+                    }
+
+                    using (document)
+                    {
+                        if (index > 0) await writer.WriteLineAsync(",");
+                        await writer.WriteAsync(document.RootElement.GetRawText());
+                    }
+                }
+                await writer.WriteLineAsync();
+                await writer.WriteLineAsync("]");
+                await writer.FlushAsync();
+            }
             File.Move(temporaryPath, outputPath);
             return outputPath;
         }
@@ -590,13 +704,15 @@ public static class BatchRunner
         BatchSettings settings,
         ResolvedExecutionDefinition? executionDefinition,
         string? batchOutputDirectory,
+        int? expectedOutputCount,
+        int? foundOutputCount,
         IReadOnlyList<JobResult> results,
         int succeeded,
         int failed,
         int skipped,
         int cancelled,
         TimeSpan elapsedRuntime,
-        string? combinedCsvPath,
+        string? combinedOutputPath,
         IReadOnlyList<string> issues,
         string jsonSummaryPath)
     {
@@ -610,8 +726,8 @@ public static class BatchRunner
             : $"Results: {succeeded} succeeded, {failed} failed, {skipped} skipped, {cancelled} cancelled");
         summary.AppendLine($"Structured summary: {jsonSummaryPath}");
         summary.AppendLine(executionDefinition is null
-            ? $"Combined CSV: {combinedCsvPath ?? "Not created"}"
-            : $"Combined output: {combinedCsvPath ?? "Not created"}");
+            ? $"Combined CSV: {combinedOutputPath ?? "Not created"}"
+            : $"Combined output: {combinedOutputPath ?? "Not created"}");
 
         summary.AppendLine();
         summary.AppendLine("Effective settings:");
@@ -634,6 +750,8 @@ public static class BatchRunner
             {
                 summary.AppendLine($"- Output format: {executionDefinition.OutputFormat}");
                 summary.AppendLine($"- Routine output directory: {batchOutputDirectory}");
+                summary.AppendLine($"- Expected routine output files: {expectedOutputCount}");
+                summary.AppendLine($"- Found routine output files: {foundOutputCount}");
             }
         }
         summary.AppendLine($"- File list path: {settings.FileListPath ?? "Not used"}");
@@ -843,8 +961,16 @@ public sealed record BatchRunResult(
     IReadOnlyList<JobResult> Jobs,
     string? StructuredSummaryPath,
     string? ReadableSummaryPath,
-    string? CombinedCsvPath,
+    string? CombinedOutputPath,
     IReadOnlyList<string> Issues,
-    bool WasCancellationRequested);
+    bool WasCancellationRequested)
+{
+    /// <summary>Compatibility alias for the legacy CSV-only result field.</summary>
+    public string? CombinedCsvPath => CombinedOutputPath;
+    public string? BatchOutputDirectory { get; init; }
+    public int? ExpectedOutputCount { get; init; }
+    public int? FoundOutputCount { get; init; }
+    public string? OutputFormat { get; init; }
+}
 internal sealed record DrawingSelection(IReadOnlyList<string> Drawings, IReadOnlyList<DuplicateCsvOutput> OmittedDrawings);
 internal readonly record struct CsvFileStamp(long Length, DateTime LastWriteUtc);
