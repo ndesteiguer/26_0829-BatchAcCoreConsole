@@ -44,6 +44,8 @@ Required checks:
 
 Preflight validates profile and filesystem conditions only. It does not parse a shared input file or prove that a routine is correct, Core Console-compatible, or safe for a specific drawing.
 
+When stale direct `%TEMP%\BatchAcCoreConsole-*` folders are found at launch, the GUI warns that cleanup is recommended. The separate **Clean Temp Folders** action is available while no batch is running. It shows every selected folder for confirmation and removes each confirmed folder independently. It never runs automatically; folders outside that exact convention, reparse points, and folders that cannot be removed are left in place and reported to the user.
+
 ### 2.3 Queue review
 
 After successful preflight, users can review the resolved drawings before starting. The queue displays the full path, source, and validation state. Duplicate input paths are shown once.

@@ -11,6 +11,8 @@ try
     await VerifyDuplicateCsvOutputHandlingAsync(workspace);
     await VerifyUsageAsync();
     VerifyReadOnlySaveDetection();
+    VerifyNonFatalTemporaryFileCleanup(workspace);
+    VerifyTemporaryRunDirectoryDetection(workspace);
     VerifyCurrentProfileDefaults();
     VerifySettingsChangeNotifications();
     VerifyExecutionDefinitionModels(workspace);
@@ -76,7 +78,7 @@ static async Task VerifyPreflightAndControlledFailureAsync(string workspace)
     invalidSettings.AcCoreConsolePath = Path.Combine(workspace, "missing-accoreconsole.exe");
     var invalidPreflight = BatchPreflight.Check(invalidSettings, workspace);
     Assert(!invalidPreflight.CanRun, "A missing Core Console executable must block the batch.");
-    Assert(invalidPreflight.Diagnostics.Single().Check == "Core Console", "A missing Core Console executable must be reported under the Core Console check.");
+    Assert(invalidPreflight.Diagnostics.Single(diagnostic => diagnostic.Severity == PreflightSeverity.Error).Check == "Core Console", "A missing Core Console executable must be reported under the Core Console check.");
 
     File.WriteAllText(settingsPath, JsonSerializer.Serialize(settings));
     var output = new CapturedOutput();
@@ -195,11 +197,43 @@ static void VerifySettingsChangeNotifications()
     Assert(changedProperties.SequenceEqual([nameof(BatchSettings.CreateLogFiles), nameof(BatchSettings.TimeoutMinutes), nameof(BatchSettings.ExecutionDefinitionPath)]), "Batch settings must report profile edits so the GUI can identify stale results.");
 }
 
+static void VerifyNonFatalTemporaryFileCleanup(string workspace)
+{
+    var lockedPath = Path.Combine(workspace, "locked-launcher.scr");
+    using (var handle = new FileStream(lockedPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
+    {
+        var deleted = BatchRunner.TryDeleteFile(lockedPath);
+        if (OperatingSystem.IsWindows())
+            Assert(!deleted, "A temporarily locked launcher file must be left for later cleanup rather than throwing from a worker.");
+    }
+
+    Assert(BatchRunner.TryDeleteFile(lockedPath), "Temporary launcher cleanup must succeed once the file handle is released.");
+}
+
+static void VerifyTemporaryRunDirectoryDetection(string workspace)
+{
+    var temporaryRoot = Path.Combine(workspace, "temporary-directory-detection");
+    var firstTemporaryDirectory = Path.Combine(temporaryRoot, "BatchAcCoreConsole-alpha");
+    var secondTemporaryDirectory = Path.Combine(temporaryRoot, "BatchAcCoreConsole-bravo");
+    Directory.CreateDirectory(firstTemporaryDirectory);
+    Directory.CreateDirectory(secondTemporaryDirectory);
+    Directory.CreateDirectory(Path.Combine(temporaryRoot, "unrelated-directory"));
+
+    var found = BatchRunner.FindTemporaryRunDirectories(temporaryRoot);
+
+    Assert(found.SequenceEqual([firstTemporaryDirectory, secondTemporaryDirectory], StringComparer.OrdinalIgnoreCase), "Temporary-folder detection must return only BatchAcCoreConsole run folders in a stable order.");
+
+    var cleanup = BatchRunner.DeleteTemporaryRunDirectories([firstTemporaryDirectory, Path.Combine(temporaryRoot, "unrelated-directory")], temporaryRoot);
+    Assert(cleanup[0].Removed && !Directory.Exists(firstTemporaryDirectory), "Confirmed cleanup must remove a selected temporary run folder.");
+    Assert(!cleanup[1].Removed && Directory.Exists(Path.Combine(temporaryRoot, "unrelated-directory")), "Cleanup must refuse to remove a folder outside the BatchAcCoreConsole temporary-folder convention.");
+    Assert(BatchRunner.FindTemporaryRunDirectories(temporaryRoot).SequenceEqual([secondTemporaryDirectory], StringComparer.OrdinalIgnoreCase), "Cleanup must leave unselected temporary run folders in place.");
+}
+
 static void VerifyExecutionDefinitionModels(string workspace)
 {
     var definitionsDirectory = Path.Combine(workspace, "execution-definitions");
     Directory.CreateDirectory(definitionsDirectory);
-    File.WriteAllText(Path.Combine(definitionsDirectory, "BlindScript.scr"), "; no save or quit\n");
+    File.WriteAllText(Path.Combine(definitionsDirectory, "BlindScript.scr"), "(command \"_.AUDIT\" \"_Y\")");
     File.WriteAllText(Path.Combine(definitionsDirectory, "BlindLisp.lsp"), "(princ)\n");
     File.WriteAllText(Path.Combine(definitionsDirectory, "Result.lsp"), "(princ)\n");
     File.WriteAllText(Path.Combine(definitionsDirectory, "Report.lsp"), "(princ)\n");
@@ -240,8 +274,9 @@ static void VerifyExecutionDefinitionModels(string workspace)
 
     var blindScriptDefinition = ExecutionDefinition.Load(Path.Combine(definitionsDirectory, "blind-script.execution.json"));
     var blindScriptLauncher = BatchRunner.BuildScript(launcherSettings, blindScriptDefinition, markerPath, null);
-    Assert(blindScriptLauncher.Contains("(command \"_.SCRIPT\"", StringComparison.Ordinal), "A blind script launcher must invoke the supplied SCR file.");
-    Assert(blindScriptLauncher.Contains("BlindScript.scr", StringComparison.Ordinal), "A blind script launcher must reference its routine.");
+    Assert(blindScriptLauncher.Contains("(command \"_.AUDIT\" \"_Y\")", StringComparison.Ordinal), "A blind script launcher must preserve the supplied SCR text.");
+    Assert(!blindScriptLauncher.Contains("(command \"_.SCRIPT\"", StringComparison.Ordinal), "A blind script launcher must not nest the SCRIPT command and abandon its application trailer.");
+    Assert(blindScriptLauncher.Contains("(command \"_.AUDIT\" \"_Y\")" + Environment.NewLine + "(command \"_.QSAVE\")", StringComparison.Ordinal), "A blind script without a final newline must receive exactly one boundary newline before the application save trailer.");
     Assert(blindScriptLauncher.Contains("(command \"_.QSAVE\")", StringComparison.Ordinal), "The application must own optional saving for scripts.");
     Assert(blindScriptLauncher.Contains("(command \"_.QUIT\" \"_Yes\")", StringComparison.Ordinal), "The application must own quitting for scripts.");
 
@@ -300,7 +335,7 @@ static void VerifyExecutionDefinitionModels(string workspace)
         ResultsDirectory = Path.Combine("execution-definitions", "results")
     };
     var missingInputPreflight = BatchPreflight.Check(missingInputPreflightSettings, workspace);
-    Assert(!missingInputPreflight.CanRun && missingInputPreflight.Diagnostics.Single().Check == "Shared input file", "A missing shared input file must block target-model preflight.");
+    Assert(!missingInputPreflight.CanRun && missingInputPreflight.Diagnostics.Single(diagnostic => diagnostic.Severity == PreflightSeverity.Error).Check == "Shared input file", "A missing shared input file must block target-model preflight.");
     AssertThrows(() => ExecutionDefinition.Load(Path.Combine(definitionsDirectory, "{\"type\":\"blind-lisp\"}.json")), "A missing execution-definition file must fail validation.");
     var invalidDefinitionPath = Path.Combine(definitionsDirectory, "invalid.execution.json");
     File.WriteAllText(invalidDefinitionPath, "{\"type\":\"lisp-report\",\"routine\":\"Report.lsp\",\"outputFormat\":\"csv\"}");

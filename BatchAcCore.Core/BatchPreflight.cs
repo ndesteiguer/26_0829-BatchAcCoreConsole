@@ -91,6 +91,7 @@ public static class BatchPreflight
 
         ReportDirectory(diagnostics, "Work directory", settings.WorkDirectory!);
         ReportDirectory(diagnostics, "Results directory", settings.ResultsDirectory!);
+        ReportTemporaryRunDirectories(diagnostics);
 
         if (settings.SaveAfterRun)
         {
@@ -140,6 +141,22 @@ public static class BatchPreflight
             diagnostics.Add(new(PreflightSeverity.Warning, check, $"Directory will be created when the batch starts: {path}"));
         else
             diagnostics.Add(new(PreflightSeverity.Warning, check, $"Directory will be created when the batch starts if its parent is writable: {path}"));
+    }
+
+    private static void ReportTemporaryRunDirectories(ICollection<PreflightDiagnostic> diagnostics)
+    {
+        var temporaryRunDirectories = BatchRunner.FindTemporaryRunDirectories();
+        if (temporaryRunDirectories.Count == 0)
+            return;
+
+        var examples = string.Join(", ", temporaryRunDirectories.Take(3));
+        var remainder = temporaryRunDirectories.Count > 3
+            ? $" (and {temporaryRunDirectories.Count - 3} more)"
+            : string.Empty;
+        diagnostics.Add(new(
+            PreflightSeverity.Warning,
+            "Temporary cleanup",
+            $"Found {temporaryRunDirectories.Count} BatchAcCoreConsole temporary folder(s) from an earlier or interrupted run: {examples}{remainder}. They were not changed; remove them manually only after confirming no batch is still running."));
     }
 
     private static void ReportReadOnlyDrawings(ICollection<PreflightDiagnostic> diagnostics, IReadOnlyList<string> drawings)

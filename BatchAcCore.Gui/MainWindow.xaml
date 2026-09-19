@@ -55,6 +55,7 @@
             <Button Content="Save Profile" Click="SaveProfile_Click" Padding="12,5" Margin="0,0,8,6" />
             <Button Content="Save Profile As..." Click="SaveProfileAs_Click" Padding="12,5" Margin="0,0,24,6" />
             <Button Content="Run Preflight" Click="RunPreflight_Click" Padding="12,5" Margin="0,0,8,6" IsEnabled="{Binding CanEdit}" />
+            <Button Content="Clean Temp Folders..." Click="CleanTemporaryFolders_Click" Padding="12,5" Margin="0,0,8,6" IsEnabled="{Binding CanEdit}" />
             <Button Content="Start Batch" Click="StartBatch_Click" Padding="12,5" Margin="0,0,8,6" IsEnabled="{Binding CanStart}" Style="{StaticResource PrimaryButton}" />
             <Button Content="Create Failed-Only Rerun" Click="CreateRerun_Click" Padding="12,5" Margin="0,0,8,6" IsEnabled="{Binding CanCreateRerun}" />
             <Button Content="Open Selected Log" Click="OpenSelectedLog_Click" Padding="12,5" Margin="0,0,8,6" IsEnabled="{Binding CanOpenSelectedLog}" />
@@ -66,16 +67,22 @@
         <StatusBar DockPanel.Dock="Bottom" Margin="0,12,0,0" HorizontalContentAlignment="Stretch">
             <StatusBarItem HorizontalContentAlignment="Stretch">
                 <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="{Binding StatusText}" />
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="{Binding DisplayStatusText}" />
                     <Separator Grid.Column="1" Margin="10,0" />
-                    <TextBlock Grid.Column="2" Text="{Binding ProgressText}" VerticalAlignment="Center" />
-                    <ProgressBar Grid.Column="3" Height="14" Margin="8,0,0,0" Minimum="0" Maximum="{Binding ProgressMaximum}" Value="{Binding ProgressValue, Mode=OneWay}" />
+                    <TextBlock Grid.Column="2" Text="{Binding DisplayProgressText}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="3" Text="Previous run" Foreground="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center">
+                        <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding IsResultsStale}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                    </TextBlock>
+                    <ProgressBar Grid.Column="4" Height="14" Margin="8,0,0,0" Minimum="0" Maximum="{Binding ProgressMaximum}" Value="{Binding ProgressValue, Mode=OneWay}">
+                        <ProgressBar.Style><Style TargetType="ProgressBar"><Setter Property="ToolTip" Value="{Binding ProgressText}" /><Style.Triggers><DataTrigger Binding="{Binding IsResultsStale}" Value="True"><Setter Property="Opacity" Value="0.45" /><Setter Property="ToolTip" Value="Previous-run progress; profile changes make these results out of date." /></DataTrigger></Style.Triggers></Style></ProgressBar.Style>
+                    </ProgressBar>
                 </Grid>
             </StatusBarItem>
         </StatusBar>

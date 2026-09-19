@@ -38,6 +38,9 @@ Expected: the GUI does not install software, request elevation, change AutoCAD p
 7. With **Save drawings after successful processing** selected, mark a disposable input DWG read-only in Windows. Run preflight and confirm it reports a warning—not an error—explaining that saving may fail. Restore the file attribute after the test.
 8. Run preflight from the Profile tab. Confirm the GUI automatically selects the **Preflight & Queue** tab.
 9. For an output-producing definition, confirm preflight reports the declared output format and fresh batch-output directory convention without requiring a source-file naming pattern.
+10. Create a disposable direct `%TEMP%\BatchAcCoreConsole-*` folder. Select **Clean Temp Folders...**, confirm the folder is shown in the confirmation dialog, approve removal, and confirm it is removed. Confirm an unrelated temporary folder is not listed or removed.
+11. With a disposable direct `%TEMP%\BatchAcCoreConsole-*` folder present, close and relaunch the GUI. Confirm it warns that cleanup is recommended and directs the user to **Clean Temp Folders...**.
+12. Select each representative execution definition and confirm **Resolved routine** shows only its entry point, whether shared input is required, and the output file type or **None**.
 
 Expected: preflight performs no DWG processing and does not create the work/output folders solely by being run.
 
@@ -52,6 +55,8 @@ Expected: preflight performs no DWG processing and does not create the work/outp
 7. Compare the result, generated outputs, exit behavior, and summaries with the CLI run using the same profile.
 8. Repeat with **Create per-job log files** cleared. Confirm the job log path is empty/unavailable and no per-job `.log` files are created, while the batch summary and output behavior remain available.
 9. Confirm the bottom status bar advances by completed drawing count, shows the number of active jobs while running, and ends at the total drawing count when the batch completes.
+10. After the final drawing completes, confirm the status identifies the active finalization phase—cleaning temporary data, collecting output, combining output, or writing the summary—rather than implying that a drawing is still running.
+11. After a completed run, modify any profile value. Confirm the Run Output tab, status text, and progress indicator identify the displayed results as a previous, out-of-date run.
 
 Expected: the GUI and CLI produce equivalent execution-definition batch artifacts and outcome.
 

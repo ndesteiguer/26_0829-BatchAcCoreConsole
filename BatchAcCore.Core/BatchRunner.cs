@@ -21,6 +21,8 @@ public enum BatchEventKind
     JobQueued,
     JobStarted,
     JobCompleted,
+    BatchFinalizing,
+    OutputCombining,
     Warning,
     BatchCompleted
 }
@@ -33,6 +35,8 @@ public sealed record BatchProgressEvent(
     string? Status = null,
     string? Message = null,
     JobResult? Result = null);
+
+public sealed record TemporaryRunDirectoryCleanupResult(string Path, bool Removed, string? Failure);
 
 public static class BatchRunner
 {
@@ -88,6 +92,8 @@ public static class BatchRunner
                 settings.Normalize(baseDirectory);
         }
         catch (Exception exception) { return Fail(output, exception.Message); }
+
+        ReportTemporaryRunDirectoryWarning(output);
 
         string[] discoveredDrawings;
         try
@@ -190,6 +196,7 @@ public static class BatchRunner
             results.Add(result);
             Report(progress, BatchEventKind.JobCompleted, drawing, status: "Cancelled", message: reason, result: result);
         }
+        Report(progress, BatchEventKind.BatchFinalizing, status: "Cleaning temporary data", message: "All drawings are complete. Cleaning temporary worker data...");
         if (!TryDeleteDirectory(isolateRoot))
         {
             output.WriteError($"Could not remove temporary Core Console profile data: {isolateRoot}");
@@ -219,6 +226,7 @@ public static class BatchRunner
             }
             else
             {
+                Report(progress, BatchEventKind.BatchFinalizing, status: "Collecting output", message: "All drawings are complete. Collecting CSV output files...");
                 var batchCsvFiles = GetBatchCsvFiles(expectedCsvFiles, csvFilesBeforeBatch).ToArray();
                 if (batchCsvFiles.Length != expectedCsvFiles.Count)
                 {
@@ -232,6 +240,7 @@ public static class BatchRunner
 
                 try
                 {
+                    Report(progress, BatchEventKind.OutputCombining, status: "Combining output", message: "All drawings are complete. Combining CSV output...");
                     combinedOutputPath = await CombineCsvFilesAsync(settings.ResultsDirectory!, batchCsvFiles);
                     output.WriteLine($"Combined CSV: {combinedOutputPath}");
                 }
@@ -247,6 +256,7 @@ public static class BatchRunner
         else if (executionDefinition.ProducesOutput)
         {
             var outputFormat = executionDefinition.OutputFormat!;
+            Report(progress, BatchEventKind.BatchFinalizing, status: "Collecting output", message: $"All drawings are complete. Collecting {outputFormat.ToUpperInvariant()} output files...");
             var outputFiles = FindRoutineOutputFiles(batchOutputDirectory!, outputFormat).ToArray();
             expectedOutputCount = succeeded;
             foundOutputCount = outputFiles.Length;
@@ -262,6 +272,7 @@ public static class BatchRunner
             {
                 try
                 {
+                    Report(progress, BatchEventKind.OutputCombining, status: "Combining output", message: $"All drawings are complete. Combining {outputFormat.ToUpperInvariant()} output...");
                     combinedOutputPath = await CombineOutputFilesAsync(settings.ResultsDirectory!, outputFormat, outputFiles);
                     output.WriteLine($"Combined {outputFormat.ToUpperInvariant()}: {combinedOutputPath}");
                 }
@@ -279,6 +290,7 @@ public static class BatchRunner
             }
         }
 
+        Report(progress, BatchEventKind.BatchFinalizing, status: "Writing summary", message: "All drawings and output processing are complete. Writing batch summary...");
         var summaryPath = Path.Combine(settings.WorkDirectory!, $"summary-{DateTime.UtcNow:yyyyMMddHHmmssfff}.json");
         await File.WriteAllTextAsync(summaryPath, JsonSerializer.Serialize(ordered, JsonOptions));
         var readableSummaryCandidate = Path.Combine(settings.ResultsDirectory!, $"batch-summary-{DateTime.UtcNow:yyyyMMddHHmmssfff}.txt");
@@ -365,7 +377,6 @@ public static class BatchRunner
             var completedOutput = await processOutput;
             if (completedOutput is not null && logPath is not null) await File.WriteAllTextAsync(logPath, completedOutput);
             var lispResult = File.Exists(resultPath) ? await File.ReadAllTextAsync(resultPath) : "No completion marker was written.";
-            File.Delete(resultPath);
             var status = process.ExitCode == 0 && lispResult.Trim() == "OK" ? "Succeeded" : "Failed";
             var error = status == "Succeeded" ? null : lispResult.Trim();
             if (status == "Succeeded" && settings.SaveAfterRun && ReportsReadOnlyDrawing(completedOutput))
@@ -385,8 +396,10 @@ public static class BatchRunner
         finally
         {
             // A fresh script is made for every run. Retain scripts in WorkDirectory only when explicitly requested.
-            if (!settings.KeepScripts && File.Exists(scriptPath)) File.Delete(scriptPath);
-            if (File.Exists(resultPath)) File.Delete(resultPath);
+            if (!settings.KeepScripts && !TryDeleteFile(scriptPath))
+                output.WriteError($"Could not remove temporary launcher script: {scriptPath}");
+            if (!TryDeleteFile(resultPath))
+                output.WriteError($"Could not remove temporary completion marker: {resultPath}");
         }
     }
 
@@ -434,7 +447,7 @@ public static class BatchRunner
     {
         var save = settings.SaveAfterRun ? "(command \"_.QSAVE\")\n" : string.Empty;
         if (executionDefinition.Type == ExecutionType.BlindScript)
-            return BuildScriptLauncher(executionDefinition.RoutinePath, resultPath, save);
+            return BuildScriptLauncher(File.ReadAllText(executionDefinition.RoutinePath), resultPath, save);
 
         var function = executionDefinition.Function!;
         var lispExpression = executionDefinition.Type switch
@@ -449,12 +462,19 @@ public static class BatchRunner
         return BuildLispLauncher(EscapeLispString(executionDefinition.RoutinePath), lispExpression, resultPath, save);
     }
 
-    private static string BuildScriptLauncher(string routinePath, string resultPath, string save)
+    private static string BuildScriptLauncher(string routineScript, string resultPath, string save)
     {
-        var scriptPath = EscapeLispString(routinePath);
         var markerPath = EscapeLispString(resultPath);
-        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(defun __batchWriteMarker (message)\n  (setq __batchMarker (open \"{markerPath}\" \"w\"))\n  (if __batchMarker\n    (progn\n      (write-line message __batchMarker)\n      (close __batchMarker)\n    )\n  )\n)\n(command \"_.SCRIPT\" \"{scriptPath}\")\n{save}(__batchWriteMarker \"OK\")\n(command \"_.QUIT\" \"_Yes\")\n";
+        // Core Console does not reliably return to the outer /s stream after a nested SCRIPT command.
+        // Preserve the vetted SCR text as-is and append the application-owned trailer to one input stream.
+        var scriptBody = EnsureTerminatingNewline(routineScript);
+        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(defun __batchWriteMarker (message)\n  (setq __batchMarker (open \"{markerPath}\" \"w\"))\n  (if __batchMarker\n    (progn\n      (write-line message __batchMarker)\n      (close __batchMarker)\n    )\n  )\n)\n{scriptBody}{save}(__batchWriteMarker \"OK\")\n(command \"_.QUIT\" \"_Yes\")\n";
     }
+
+    private static string EnsureTerminatingNewline(string script) =>
+        script.Length == 0 || script.EndsWith('\n') || script.EndsWith('\r')
+            ? script
+            : script + Environment.NewLine;
 
     private static string BuildLispLauncher(string lispPath, string lispExpression, string resultPath, string save)
     {
@@ -473,6 +493,89 @@ public static class BatchRunner
             : batchOutputDirectory;
 
     private static string EscapeLispString(string value) => value.Replace("\\", "/").Replace("\"", "\\\"");
+
+    internal static bool TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path)) File.Delete(path);
+            return true;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
+    public static IReadOnlyList<string> FindTemporaryRunDirectories(string? temporaryRoot = null)
+    {
+        var root = temporaryRoot ?? Path.GetTempPath();
+        try
+        {
+            if (!Directory.Exists(root)) return [];
+
+            return Directory
+                .EnumerateDirectories(root, "BatchAcCoreConsole-*", SearchOption.TopDirectoryOnly)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+        catch (IOException) { return []; }
+        catch (UnauthorizedAccessException) { return []; }
+    }
+
+    public static IReadOnlyList<TemporaryRunDirectoryCleanupResult> DeleteTemporaryRunDirectories(
+        IEnumerable<string> paths,
+        string? temporaryRoot = null)
+    {
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(temporaryRoot ?? Path.GetTempPath()));
+        return paths
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(path => DeleteTemporaryRunDirectory(path, root))
+            .ToArray();
+    }
+
+    private static TemporaryRunDirectoryCleanupResult DeleteTemporaryRunDirectory(string path, string temporaryRoot)
+    {
+        string fullPath;
+        try
+        {
+            fullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return new(path, false, exception.Message);
+        }
+
+        if (!string.Equals(Path.GetDirectoryName(fullPath), temporaryRoot, StringComparison.OrdinalIgnoreCase) ||
+            !Path.GetFileName(fullPath).StartsWith("BatchAcCoreConsole-", StringComparison.OrdinalIgnoreCase))
+        {
+            return new(path, false, "The folder is not a direct BatchAcCoreConsole temporary folder.");
+        }
+
+        try
+        {
+            if (!Directory.Exists(fullPath))
+                return new(fullPath, true, null);
+            if ((File.GetAttributes(fullPath) & FileAttributes.ReparsePoint) != 0)
+                return new(fullPath, false, "The folder is a reparse point and was not removed.");
+
+            Directory.Delete(fullPath, recursive: true);
+            return new(fullPath, true, null);
+        }
+        catch (IOException exception) { return new(fullPath, false, exception.Message); }
+        catch (UnauthorizedAccessException exception) { return new(fullPath, false, exception.Message); }
+    }
+
+    private static void ReportTemporaryRunDirectoryWarning(IBatchOutput output)
+    {
+        var temporaryRunDirectories = FindTemporaryRunDirectories();
+        if (temporaryRunDirectories.Count == 0)
+            return;
+
+        var examples = string.Join(", ", temporaryRunDirectories.Take(3));
+        var remainder = temporaryRunDirectories.Count > 3
+            ? $" (and {temporaryRunDirectories.Count - 3} more)"
+            : string.Empty;
+        output.WriteLine($"Warning: Found {temporaryRunDirectories.Count} BatchAcCoreConsole temporary folder(s) from an earlier or interrupted run: {examples}{remainder}. They were not changed; remove them manually only after confirming no batch is still running.");
+    }
 
     private static bool TryDeleteDirectory(string path)
     {

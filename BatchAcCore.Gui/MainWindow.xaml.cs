@@ -40,6 +40,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         Settings.PropertyChanged += Settings_PropertyChanged;
         DataContext = this;
         RefreshExecutionDefinitionInfo();
+        Loaded += MainWindow_Loaded;
+    }
+
+    private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+    {
+        var temporaryFolders = BatchRunner.FindTemporaryRunDirectories();
+        if (temporaryFolders.Count == 0)
+            return;
+
+        RunSummary = $"Found {temporaryFolders.Count} BatchAcCoreConsole temporary folder(s) from an earlier or interrupted run. Cleanup is recommended.";
+        StatusText = "Temporary folder cleanup recommended.";
+        MessageBox.Show(
+            this,
+            $"Found {temporaryFolders.Count} BatchAcCoreConsole temporary folder(s) from an earlier or interrupted run.\n\nCleanup is recommended. Select Clean Temp Folders... to review and remove them after confirming that no batch is running.",
+            Title,
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
     }
 
     public BatchSettings Settings
@@ -145,8 +162,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string StatusText
     {
         get => _statusText;
-        private set => SetField(ref _statusText, value);
+        private set
+        {
+            if (SetField(ref _statusText, value))
+                OnPropertyChanged(nameof(DisplayStatusText));
+        }
     }
+
+    public string DisplayStatusText => IsResultsStale
+        ? "Previous run — profile modified; status and results are out of date"
+        : StatusText;
 
     public int ProgressMaximum => Math.Max(1, _progressTotal);
     public int ProgressValue
@@ -156,6 +181,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     public string ProgressText => _progressTotal == 0 ? "No batch queued" : $"{ProgressValue} / {_progressTotal} complete";
+    public string DisplayProgressText => IsResultsStale ? "Previous-run " + ProgressText : ProgressText;
 
     public bool IsResultsStale
     {
@@ -164,6 +190,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             if (!SetField(ref _isResultsStale, value)) return;
             OnPropertyChanged(nameof(RunOutputHeader));
+            OnPropertyChanged(nameof(DisplayStatusText));
+            OnPropertyChanged(nameof(DisplayProgressText));
             OnPropertyChanged(nameof(CanCreateRerun));
         }
     }
@@ -292,6 +320,45 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         RunPreflight();
         PreflightQueueTab.IsSelected = true;
+    }
+
+    private void CleanTemporaryFolders_Click(object sender, RoutedEventArgs e)
+    {
+        var directories = BatchRunner.FindTemporaryRunDirectories();
+        if (directories.Count == 0)
+        {
+            MessageBox.Show(this, "No BatchAcCoreConsole temporary folders were found.", Title, MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var folderList = string.Join(Environment.NewLine, directories);
+        var confirmation = MessageBox.Show(
+            this,
+            $"Delete these {directories.Count} BatchAcCoreConsole temporary folder(s)?\n\n{folderList}\n\nThis permanently removes the folders and their contents. Confirm that no BatchAcCoreConsole batch is running.",
+            Title,
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (confirmation != MessageBoxResult.Yes)
+            return;
+
+        var results = BatchRunner.DeleteTemporaryRunDirectories(directories);
+        var removed = results.Count(result => result.Removed);
+        var failures = results.Where(result => !result.Removed).ToArray();
+        RunPreflight();
+
+        if (failures.Length == 0)
+        {
+            RunSummary = $"Removed {removed} BatchAcCoreConsole temporary folder(s).";
+            StatusText = "Temporary folders cleaned.";
+            MessageBox.Show(this, RunSummary, Title, MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var failureDetails = string.Join(Environment.NewLine, failures.Select(result => $"{result.Path}: {result.Failure}"));
+        RunSummary = $"Removed {removed} BatchAcCoreConsole temporary folder(s); {failures.Length} could not be removed.";
+        StatusText = "Temporary folder cleanup completed with warnings.";
+        MessageBox.Show(this, RunSummary + "\n\n" + failureDetails, Title, MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private async void StartBatch_Click(object sender, RoutedEventArgs e)
@@ -472,9 +539,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (!definition.RequiresSharedInputFile)
                 Settings.SharedInputFilePath = null;
 
-            var function = definition.Function is null ? string.Empty : $"; function {definition.Function}";
-            var output = definition.OutputFormat is null ? string.Empty : $"; {definition.OutputFormat} output";
-            ExecutionDetails = $"{definition.Type}: {definition.RoutinePath}{function}{output}";
+            var entryPoint = definition.Type == ExecutionType.BlindScript
+                ? Path.GetFileName(definition.RoutinePath)
+                : definition.Function!;
+            var sharedInput = definition.RequiresSharedInputFile ? "Yes" : "No";
+            var outputType = definition.OutputFormat ?? "None";
+            ExecutionDetails = $"Entry point: {entryPoint}{Environment.NewLine}Shared input file: {sharedInput}{Environment.NewLine}Output file type: {outputType}";
         }
         catch (Exception exception)
         {
@@ -553,6 +623,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
 
         if (progress.Kind == BatchEventKind.Warning && progress.Message is not null) AppendOutput("Warning: " + progress.Message);
+        if (progress.Kind is BatchEventKind.BatchFinalizing or BatchEventKind.OutputCombining)
+        {
+            UpdateBatchProgressStatus();
+            StatusText = progress.Message ?? "All drawings are complete. Finalizing batch...";
+            RunSummary = progress.Message ?? "All drawings are complete. Finalizing batch.";
+            return;
+        }
         if (progress.Kind == BatchEventKind.BatchCompleted) RunSummary = "Batch is finishing. " + BuildQueueSummary();
         if (progress.Kind is BatchEventKind.BatchStarted or BatchEventKind.JobStarted or BatchEventKind.JobCompleted or BatchEventKind.BatchCompleted)
             UpdateBatchProgressStatus();
@@ -608,6 +685,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         ProgressValue = Math.Clamp(value, 0, Math.Max(total, 1));
         OnPropertyChanged(nameof(ProgressMaximum));
         OnPropertyChanged(nameof(ProgressText));
+        OnPropertyChanged(nameof(DisplayProgressText));
     }
 
     private void ClearRunState()
