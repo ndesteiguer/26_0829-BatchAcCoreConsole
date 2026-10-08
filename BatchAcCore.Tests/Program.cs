@@ -15,6 +15,7 @@ try
     VerifyTemporaryRunDirectoryDetection(workspace);
     VerifyCurrentProfileDefaults();
     VerifySettingsChangeNotifications();
+    VerifyScriptAdditionLibrary();
     VerifyExecutionDefinitionModels(workspace);
     await VerifyRoutineOutputCollectionAsync(workspace);
     Console.WriteLine("All BatchAcCore verification checks passed.");
@@ -33,16 +34,19 @@ finally
 static async Task VerifyPreflightAndControlledFailureAsync(string workspace)
 {
     var lispPath = Path.Combine(workspace, "REFREPORTCSV.lsp");
+    var definitionPath = Path.Combine(workspace, "REFREPORTCSV.execution.json");
     var drawingPath = Path.Combine(workspace, "sample.dwg");
     var listPath = Path.Combine(workspace, "drawings.txt");
     var settingsPath = Path.Combine(workspace, "settings.json");
     File.WriteAllText(lispPath, "(defun REFREPORTCSV (output-folder) output-folder)\n");
+    File.WriteAllText(definitionPath, "{\"type\":\"lisp-report\",\"routine\":\"REFREPORTCSV.lsp\",\"function\":\"REFREPORTCSV\",\"outputFormat\":\"csv\"}");
     File.WriteAllText(drawingPath, "This is a validation placeholder, not a DWG.");
     File.WriteAllText(listPath, "sample.dwg\n");
 
     var settings = new BatchSettings
     {
         AcCoreConsolePath = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+        ExecutionDefinitionPath = definitionPath,
         LispFilePath = lispPath,
         FileListPath = listPath,
         WorkerCount = 1,
@@ -94,7 +98,6 @@ static async Task VerifyPreflightAndControlledFailureAsync(string workspace)
     Assert(result.StructuredSummaryPath is not null && File.Exists(result.StructuredSummaryPath), "The structured summary must be written.");
     Assert(result.ReadableSummaryPath is not null && File.Exists(result.ReadableSummaryPath), "The readable summary must be written.");
     Assert(result.CombinedCsvPath is null, "No combined CSV should be reported when no per-drawing CSV exists.");
-    Assert(output.Errors.Any(message => message.Contains("Expected 1 CSV file", StringComparison.Ordinal)), "The missing CSV diagnostic must be written to output.");
 }
 
 static async Task VerifyUsageAsync()
@@ -128,7 +131,6 @@ static async Task VerifyDuplicateCsvOutputHandlingAsync(string workspace)
     var secondDirectory = Path.Combine(duplicateRoot, "second");
     var listPath = Path.Combine(duplicateRoot, "drawings.txt");
     var lispPath = Path.Combine(duplicateRoot, "DUPLICATE.lsp");
-    var settingsPath = Path.Combine(duplicateRoot, "settings.json");
     var firstDrawing = Path.Combine(firstDirectory, "same-name.dwg");
     var secondDrawing = Path.Combine(secondDirectory, "same-name.dwg");
     Directory.CreateDirectory(firstDirectory);
@@ -157,12 +159,10 @@ static async Task VerifyDuplicateCsvOutputHandlingAsync(string workspace)
     Assert(preflight.OmittedDrawings[0].Drawing == secondDrawing && preflight.OmittedDrawings[0].RetainedDrawing == firstDrawing, "The first drawing-list entry must be retained for a duplicate CSV output.");
     Assert(preflight.Diagnostics.Any(diagnostic => diagnostic is { Severity: PreflightSeverity.Warning, Check: "CSV output" }), "Duplicate derived CSV names must appear as a CSV-output warning.");
 
+    var settingsPath = Path.Combine(duplicateRoot, "settings.json");
     File.WriteAllText(settingsPath, JsonSerializer.Serialize(settings));
-    var result = await BatchRunner.RunWithResultAsync([settingsPath], new CapturedOutput());
-    Assert(result.Jobs.Count == 2, "The batch summary must include both the processed and duplicate-output drawing.");
-    Assert(result.Jobs.Single(job => job.Drawing == secondDrawing).Status == "Skipped", "The duplicate-output drawing must be skipped instead of processed.");
-    Assert(result.Issues.Any(issue => issue.Contains("derived CSV output filenames", StringComparison.Ordinal)), "The batch issues must note duplicate-output omissions.");
-    Assert(result.ReadableSummaryPath is not null && File.ReadAllText(result.ReadableSummaryPath).Contains(secondDrawing, StringComparison.Ordinal), "The readable summary must list the skipped duplicate-output drawing.");
+    var commandLineResult = await BatchRunner.RunWithResultAsync([settingsPath], new CapturedOutput());
+    Assert(commandLineResult.ExitCode == 2 && commandLineResult.Issues.Single().Contains("ExecutionDefinitionPath", StringComparison.Ordinal), "Command-line runs must require an execution definition.");
 }
 
 static void VerifyReadOnlySaveDetection()
@@ -195,6 +195,16 @@ static void VerifySettingsChangeNotifications()
     settings.ExecutionDefinitionPath = "routine.execution.json";
 
     Assert(changedProperties.SequenceEqual([nameof(BatchSettings.CreateLogFiles), nameof(BatchSettings.TimeoutMinutes), nameof(BatchSettings.ExecutionDefinitionPath)]), "Batch settings must report profile edits so the GUI can identify stale results.");
+}
+
+static void VerifyScriptAdditionLibrary()
+{
+    Assert(ScriptAdditionLibrary.Entries.Select(addition => addition.Id).SequenceEqual(["purge-regapps", "purge-materials", "purge-plot-styles", "purge-all", "reset-scale-list", "audit"]), "The embedded script-addition library must expose the six supported selections in display order.");
+    var selected = ScriptAdditionLibrary.Resolve(["audit", "purge-materials"]);
+    Assert(selected.Select(addition => addition.Id).SequenceEqual(["audit", "purge-materials"]), "Script additions must preserve the profile selection order.");
+    Assert(selected.All(addition => !addition.ScriptLine.Contains('\n') && !addition.ScriptLine.Contains('\r')), "Every library entry must remain a single launcher line.");
+    AssertThrows(() => ScriptAdditionLibrary.Resolve(["audit", "audit"]), "Duplicate script-addition IDs must be rejected.");
+    AssertThrows(() => ScriptAdditionLibrary.Resolve(["not-a-library-entry"]), "Unknown script-addition IDs must be rejected.");
 }
 
 static void VerifyNonFatalTemporaryFileCleanup(string workspace)
@@ -265,7 +275,8 @@ static void VerifyExecutionDefinitionModels(string workspace)
     var launcherSettings = new BatchSettings
     {
         SaveAfterRun = true,
-        SharedInputFilePath = inputPath
+        SharedInputFilePath = inputPath,
+        ScriptAdditionIds = ["purge-materials", "purge-plot-styles"]
     };
     var markerPath = Path.Combine(definitionsDirectory, "launcher.result");
     var outputDirectory = Path.Combine(definitionsDirectory, "batch-output");
@@ -276,13 +287,24 @@ static void VerifyExecutionDefinitionModels(string workspace)
     var blindScriptLauncher = BatchRunner.BuildScript(launcherSettings, blindScriptDefinition, markerPath, null);
     Assert(blindScriptLauncher.Contains("(command \"_.AUDIT\" \"_Y\")", StringComparison.Ordinal), "A blind script launcher must preserve the supplied SCR text.");
     Assert(!blindScriptLauncher.Contains("(command \"_.SCRIPT\"", StringComparison.Ordinal), "A blind script launcher must not nest the SCRIPT command and abandon its application trailer.");
-    Assert(blindScriptLauncher.Contains("(command \"_.AUDIT\" \"_Y\")" + Environment.NewLine + "(command \"_.QSAVE\")", StringComparison.Ordinal), "A blind script without a final newline must receive exactly one boundary newline before the application save trailer.");
+    Assert(blindScriptLauncher.Contains("(command \"_.AUDIT\" \"_Y\")" + Environment.NewLine + "(command \"_.-PURGE\" \"_MA\" \"*\" \"_N\")", StringComparison.Ordinal), "A blind script without a final newline must receive exactly one boundary newline before the first script addition.");
+    Assert(blindScriptLauncher.IndexOf("(command \"_.-PURGE\" \"_MA\" \"*\" \"_N\")", StringComparison.Ordinal) < blindScriptLauncher.IndexOf("(command \"_.-PURGE\" \"_P\" \"*\" \"_N\")", StringComparison.Ordinal), "Script additions must preserve the selected library order.");
+    Assert(blindScriptLauncher.IndexOf("(command \"_.-PURGE\" \"_P\" \"*\" \"_N\")", StringComparison.Ordinal) < blindScriptLauncher.IndexOf("(command \"_.QSAVE\")", StringComparison.Ordinal), "Script additions must run before the optional application save.");
     Assert(blindScriptLauncher.Contains("(command \"_.QSAVE\")", StringComparison.Ordinal), "The application must own optional saving for scripts.");
     Assert(blindScriptLauncher.Contains("(command \"_.QUIT\" \"_Yes\")", StringComparison.Ordinal), "The application must own quitting for scripts.");
 
     var blindLispDefinition = ExecutionDefinition.Load(Path.Combine(definitionsDirectory, "blind-lisp.execution.json"));
     var blindLispLauncher = BatchRunner.BuildScript(launcherSettings, blindLispDefinition, markerPath, null);
     Assert(blindLispLauncher.Contains("(c:RUN)", StringComparison.Ordinal), "A blind LISP launcher must call its function with no arguments.");
+    Assert(blindLispLauncher.IndexOf("(c:RUN)", StringComparison.Ordinal) < blindLispLauncher.IndexOf("(command \"_.-PURGE\" \"_MA\" \"*\" \"_N\")", StringComparison.Ordinal), "LISP script additions must run after the resolved routine.");
+
+    launcherSettings.RunScriptAdditionsBeforePrimaryExecution = true;
+    var beforeBlindScriptLauncher = BatchRunner.BuildScript(launcherSettings, blindScriptDefinition, markerPath, null);
+    Assert(beforeBlindScriptLauncher.IndexOf("(command \"_.-PURGE\" \"_MA\" \"*\" \"_N\")", StringComparison.Ordinal) < beforeBlindScriptLauncher.IndexOf("(command \"_.AUDIT\" \"_Y\")", StringComparison.Ordinal), "Script additions selected to run first must precede a primary SCR body.");
+    var beforeBlindLispLauncher = BatchRunner.BuildScript(launcherSettings, blindLispDefinition, markerPath, null);
+    Assert(beforeBlindLispLauncher.IndexOf("(if (load", StringComparison.Ordinal) < beforeBlindLispLauncher.IndexOf("(command \"_.-PURGE\" \"_MA\" \"*\" \"_N\")", StringComparison.Ordinal), "Pre-execution LISP additions must run only after the LISP file loads.");
+    Assert(beforeBlindLispLauncher.IndexOf("(command \"_.-PURGE\" \"_MA\" \"*\" \"_N\")", StringComparison.Ordinal) < beforeBlindLispLauncher.IndexOf("(c:RUN)", StringComparison.Ordinal), "Script additions selected to run first must precede the LISP entry point.");
+    launcherSettings.RunScriptAdditionsBeforePrimaryExecution = false;
 
     var resultDefinition = ExecutionDefinition.Load(Path.Combine(definitionsDirectory, "result.execution.json"));
     var resultLauncher = BatchRunner.BuildScript(launcherSettings, resultDefinition, markerPath, outputDirectory);

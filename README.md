@@ -7,7 +7,7 @@ The intended product direction and boundaries for the next development stage are
 ## Workflow
 
 1. Put one DWG path per line in `drawings.txt` (blank lines and lines beginning with `#` are ignored), or configure `InputDirectory` to discover DWGs.
-2. Keep each routine beside its paired execution-definition JSON. The JSON declares the execution type, routine path, callable LISP function when applicable, and output format when applicable. See [EXECUTION_CONTRACT.md](EXECUTION_CONTRACT.md).
+2. Keep each CLI routine beside its paired execution-definition JSON. The CLI requires the JSON, which declares the execution type, routine path, callable LISP function when applicable, and output format when applicable. See [EXECUTION_CONTRACT.md](EXECUTION_CONTRACT.md).
 3. Copy `settings.example.json` to `settings.json` and supply the AutoCAD, execution-definition, input, and worker settings. Use **either** `FileListPath` or `InputDirectory`. Add `SharedInputFilePath` only for `lisp-input-report`. New profiles default to AutoCAD 2026 Core Console, four workers, a ten-minute timeout, no drawing save, and per-job logs enabled.
 4. Run:
 
@@ -27,7 +27,7 @@ The target workstation needs the matching x64 .NET Runtime. AutoCAD/Core Console
 
 ## Windows GUI
 
-The WPF GUI is the desktop workflow for the same runner. It supports profile editing and saving, explicit preflight, resolved-queue review, live job status, cancellation of queued work, result/log review, and creation of a separate failed-only rerun profile.
+The WPF GUI is the desktop workflow for the same runner. Operators select a routine first. The GUI automatically prefers a valid adjacent `<routine>.execution.json` sidecar when present; a standalone SCR can run directly, while a LISP without a selected definition opens a wizard to select or create one. The wizard normally saves a reusable sidecar, with a deliberate Run once option for development or troubleshooting. The GUI also supports profile editing and saving, explicit preflight, resolved-queue review, live job status, cancellation of queued work, result/log review, and creation of a separate failed-only rerun profile.
 
 Run it from a development checkout:
 
@@ -76,7 +76,11 @@ For every drawing, the runner creates a unique temporary `.scr`, launches:
 accoreconsole.exe /i "drawing.dwg" /s "unique-job.scr"
 ```
 
-The generated launcher disables dialogs, dispatches the configured execution type and arguments, optionally saves, writes a plain AutoLISP completion marker, and exits AutoCAD. It deliberately contains no `vl-`, `vla-`, or `vlax-` calls for Core Console compatibility. If the routine errors before it reaches the marker, the runner marks that drawing as failed. If a LISP cannot be loaded—for example, because its folder is untrusted—the runner records `Lisp routine failed to load.` even if Core Console exits with code 0. That batch-wide failure prevents queued drawings from starting; drawings already running finish safely, and output combination is skipped. By default, generated launchers are written to the temporary batch root and deleted after execution. Set `KeepScripts` to `true` only when troubleshooting; retained launchers are then written to `WorkDirectory`.
+The generated launcher disables dialogs, dispatches the configured execution type and arguments, appends any selected script-library lines, optionally saves, writes a plain AutoLISP completion marker, and exits AutoCAD. It deliberately contains no `vl-`, `vla-`, or `vlax-` calls for Core Console compatibility. If the routine errors before it reaches the marker, the runner marks that drawing as failed. If a LISP cannot be loaded—for example, because its folder is untrusted—the runner records `Lisp routine failed to load.` even if Core Console exits with code 0. That batch-wide failure prevents queued drawings from starting; drawings already running finish safely, and output combination is skipped. By default, generated launchers are written to the temporary batch root and deleted after execution. Set `KeepScripts` to `true` only when troubleshooting; retained launchers are then written to `WorkDirectory`.
+
+### Script-addition library
+
+Profiles can select `ScriptAdditionIds` from the application-owned library. These optional lines run once for every drawing, either before or after the primary routine or script; set `RunScriptAdditionsBeforePrimaryExecution` to `true` to run them first. For LISP definitions, "before" means after the LISP file successfully loads and before its configured entry point is called. All selections and timing default to after-primary behavior. A profile saves only IDs, so it cannot introduce arbitrary command text. The library is compiled from [script-addition-library.json](script-addition-library.json), a developer-maintained plain-text resource; changing it requires rebuilding the application, so users cannot add or remove selections. The current library provides Purge RegApps, Purge Materials, Purge Plot Styles, Purge All, Reset Scale List, and Audit.
 
 Each batch creates a temporary root under the Windows temporary directory, for example `%TEMP%\BatchAcCoreConsole-<unique-batch-id>`. Each worker runs Core Console with its isolated profile in a `worker-<n>` subfolder, and the short-lived per-drawing completion markers and default transient scripts are written directly in the temporary root. The entire temporary root is removed after the batch finishes, even when `KeepScripts` is `true`, and remains outside `WorkDirectory` so its files do not mix with retained batch artifacts or ordinary folder synchronization.
 

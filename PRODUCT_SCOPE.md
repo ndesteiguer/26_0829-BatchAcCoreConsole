@@ -8,7 +8,7 @@ The application is an orchestration, safety, and reporting layer around known-go
 
 ## In scope
 
-- Select an AcCoreConsole executable and a paired execution-definition JSON for an AutoLISP routine or standalone `.scr` script.
+- In the GUI, select an AcCoreConsole executable and a routine first; use an adjacent or wizard-created execution definition when the routine needs one. The CLI requires a paired execution-definition JSON.
 - Resolve a drawing list or input directory into a reviewable queue, then execute the queue with configurable bounded concurrency.
 - Apply basic validation for profile values, required files, input drawings, output locations, worker limits, and timeouts.
 - Apply operational guardrails: per-worker Core Console isolation, dialog suppression where applicable, controlled saving, timeouts, cancellation of queued work, retained logs, and per-drawing/batch summaries.
@@ -25,7 +25,7 @@ The application is an orchestration, safety, and reporting layer around known-go
 
 ## Paired execution definitions
 
-Each vetted routine is paired with a small execution-definition JSON file. It identifies one of five fixed execution types, the routine path, an explicit LISP function when applicable, and an output format when applicable. The execution type fixes LISP argument order; batch-specific values such as a shared input file remain in the batch profile.
+When needed, a vetted routine is paired with a small execution-definition JSON file. It identifies one of five fixed execution types, the routine path, an explicit LISP function when applicable, and an output format when applicable. The execution type fixes LISP argument order; batch-specific values such as a shared input file remain in the batch profile. The GUI can run a selected standalone SCR without a persistent definition; the CLI always requires one. A GUI definition wizard creates definitions without parsing or evaluating LISP source.
 
 The definition is stored beside its routine and has no master-catalog dependency. The full v1 contract, output handling, lifecycle convention, examples, and validation boundary are defined in [EXECUTION_CONTRACT.md](EXECUTION_CONTRACT.md).
 

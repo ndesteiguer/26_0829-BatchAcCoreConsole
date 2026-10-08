@@ -1,0 +1,38 @@
+[
+  {
+    "id": "purge-regapps",
+    "name": "Purge RegApps",
+    "description": "Removes unused registered application definitions.",
+    "scriptLine": "(command \"_.-PURGE\" \"_R\" \"*\" \"_N\")"
+  },
+  {
+    "id": "purge-materials",
+    "name": "Purge Materials",
+    "description": "Removes unused material definitions.",
+    "scriptLine": "(command \"_.-PURGE\" \"_MA\" \"*\" \"_N\")"
+  },
+  {
+    "id": "purge-plot-styles",
+    "name": "Purge Plot Styles",
+    "description": "Removes unused plot-style definitions.",
+    "scriptLine": "(command \"_.-PURGE\" \"_P\" \"*\" \"_N\")"
+  },
+  {
+    "id": "purge-all",
+    "name": "Purge All",
+    "description": "Removes all eligible unused definitions.",
+    "scriptLine": "(command \"_.-PURGE\" \"_A\" \"*\" \"_N\")"
+  },
+  {
+    "id": "reset-scale-list",
+    "name": "Reset Scale List",
+    "description": "Resets the drawing annotation scale list.",
+    "scriptLine": "(command \"_.-SCALELISTEDIT\" \"_R\" \"_Y\" \"_E\")"
+  },
+  {
+    "id": "audit",
+    "name": "Audit",
+    "description": "Checks and fixes drawing database errors.",
+    "scriptLine": "(command \"_.AUDIT\" \"_Y\")"
+  }
+]

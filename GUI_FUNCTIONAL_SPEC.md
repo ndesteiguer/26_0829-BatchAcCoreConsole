@@ -1,6 +1,6 @@
 # Batch AcCoreConsole GUI — Functional Specification
 
-> **Scope authority:** [PRODUCT_SCOPE.md](PRODUCT_SCOPE.md) supersedes this document if a detail differs. [EXECUTION_CONTRACT.md](EXECUTION_CONTRACT.md) defines execution-definition fields and lifecycle behavior. The GUI implements a safe, observable execution workflow for user-vetted routines; it does not author or interpret them.
+> **Scope authority:** [PRODUCT_SCOPE.md](PRODUCT_SCOPE.md) supersedes this document if a detail differs. [EXECUTION_CONTRACT.md](EXECUTION_CONTRACT.md) defines execution-definition fields and lifecycle behavior. The GUI implements a safe, observable execution workflow for user-vetted routines; it can author an execution definition through the constrained definition wizard, but does not inspect or interpret routine source.
 
 ## 1. Purpose
 
@@ -15,12 +15,14 @@ The user can create, open, edit, save, duplicate, and validate a JSON execution 
 Every profile selects:
 
 - `AcCoreConsolePath`
-- `ExecutionDefinitionPath`, pointing to the JSON paired with the routine
+- `RoutinePath`, selecting the `.lsp` or `.scr` first
+- `ExecutionDefinitionPath` when a saved or selected definition applies
 - `SharedInputFilePath` only when the resolved definition is `lisp-input-report`
+- `ScriptAdditionIds`, an optional ordered selection from the application-owned script-addition library
 - exactly one input method: `FileListPath` or `InputDirectory`
 - work and results directories
 
-Profiles also expose basic execution settings: recursive discovery, invalid-entry handling, worker count, timeout, save-after-run, retained generated launcher scripts, and per-job logs. The GUI reads the selected definition to display its type, routine, function, and output format; it does not inspect source or parse the input file to derive values.
+The GUI first looks for a valid adjacent `<routine>.execution.json` sidecar and defaults to it when found; operators can opt out to configure the selected routine directly. A standalone SCR needs no persistent definition. A LISP without a selected definition must use an existing definition or the standalone wizard—no LISP source parsing or entry-point inference occurs. The wizard normally saves a reusable sidecar and has an explicit Run once option for development or troubleshooting. Profiles also expose basic execution settings: recursive discovery, invalid-entry handling, worker count, timeout, save-after-run, retained generated launcher scripts, and per-job logs. The GUI reads the selected definition to display its type, routine, function, and output format. It can run selected, application-owned single-line AutoCAD commands either before or after the primary execution, and before optional saving; profiles persist the library IDs and one shared timing choice rather than arbitrary command text. For LISP definitions, pre-execution additions run after the LISP file loads but before its entry point is invoked. The library is compiled from a developer-maintained JSON resource, so users can select but cannot add or remove commands.
 
 ### 2.2 Preflight
 

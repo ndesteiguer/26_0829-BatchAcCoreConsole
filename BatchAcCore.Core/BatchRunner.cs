@@ -86,10 +86,9 @@ public static class BatchRunner
         ResolvedExecutionDefinition? executionDefinition = null;
         try
         {
-            if (!string.IsNullOrWhiteSpace(settings.ExecutionDefinitionPath))
-                executionDefinition = settings.NormalizeExecutionProfile(baseDirectory);
-            else
-                settings.Normalize(baseDirectory);
+            if (string.IsNullOrWhiteSpace(settings.ExecutionDefinitionPath))
+                return Fail(output, "ExecutionDefinitionPath is required for command-line runs.");
+            executionDefinition = settings.NormalizeExecutionProfile(baseDirectory);
         }
         catch (Exception exception) { return Fail(output, exception.Message); }
 
@@ -135,6 +134,9 @@ public static class BatchRunner
             if (executionDefinition.RequiresSharedInputFile)
                 output.WriteLine($"Shared input file: {settings.SharedInputFilePath}");
         }
+        var scriptAdditions = ScriptAdditionLibrary.Resolve(settings.ScriptAdditionIds);
+        if (scriptAdditions.Count > 0)
+            output.WriteLine($"Script additions ({(settings.RunScriptAdditionsBeforePrimaryExecution ? "before" : "after")} primary execution): {string.Join(", ", scriptAdditions.Select(addition => addition.Name))}");
         output.WriteLine($"Queued {drawings.Count} drawing(s), using {settings.WorkerCount} worker(s).");
         if (selection.OmittedDrawings.Count > 0)
             output.WriteLine($"Skipped {selection.OmittedDrawings.Count} drawing(s) with duplicate derived CSV output filenames.");
@@ -436,7 +438,7 @@ public static class BatchRunner
         var workDirectory = EscapeLispString(settings.WorkDirectory!);
         var lispExpression = $"({settings.RoutineFunction} \"{workDirectory}\")";
         var save = settings.SaveAfterRun ? "(command \"_.QSAVE\")\n" : string.Empty;
-        return BuildLispLauncher(lispPath, lispExpression, resultPath, save);
+        return BuildLispLauncher(lispPath, lispExpression, resultPath, save, BuildScriptAdditions(settings), settings.RunScriptAdditionsBeforePrimaryExecution);
     }
 
     internal static string BuildScript(
@@ -446,8 +448,9 @@ public static class BatchRunner
         string? batchOutputDirectory)
     {
         var save = settings.SaveAfterRun ? "(command \"_.QSAVE\")\n" : string.Empty;
+        var scriptAdditions = BuildScriptAdditions(settings);
         if (executionDefinition.Type == ExecutionType.BlindScript)
-            return BuildScriptLauncher(File.ReadAllText(executionDefinition.RoutinePath), resultPath, save);
+            return BuildScriptLauncher(File.ReadAllText(executionDefinition.RoutinePath), resultPath, save, scriptAdditions, settings.RunScriptAdditionsBeforePrimaryExecution);
 
         var function = executionDefinition.Function!;
         var lispExpression = executionDefinition.Type switch
@@ -459,16 +462,22 @@ public static class BatchRunner
                 $"({function} \"{EscapeLispString(settings.SharedInputFilePath!)}\" \"{EscapeLispString(RequiredBatchOutputDirectory(batchOutputDirectory))}\")",
             _ => throw new ArgumentException($"Unsupported execution type: {executionDefinition.Type}.")
         };
-        return BuildLispLauncher(EscapeLispString(executionDefinition.RoutinePath), lispExpression, resultPath, save);
+        return BuildLispLauncher(EscapeLispString(executionDefinition.RoutinePath), lispExpression, resultPath, save, scriptAdditions, settings.RunScriptAdditionsBeforePrimaryExecution);
     }
 
-    private static string BuildScriptLauncher(string routineScript, string resultPath, string save)
+    private static string BuildScriptAdditions(BatchSettings settings) =>
+        string.Concat(ScriptAdditionLibrary.Resolve(settings.ScriptAdditionIds).Select(addition => addition.ScriptLine + "\n"));
+
+    private static string BuildScriptLauncher(string routineScript, string resultPath, string save, string scriptAdditions, bool runAdditionsBeforePrimaryExecution)
     {
         var markerPath = EscapeLispString(resultPath);
         // Core Console does not reliably return to the outer /s stream after a nested SCRIPT command.
         // Preserve the vetted SCR text as-is and append the application-owned trailer to one input stream.
         var scriptBody = EnsureTerminatingNewline(routineScript);
-        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(defun __batchWriteMarker (message)\n  (setq __batchMarker (open \"{markerPath}\" \"w\"))\n  (if __batchMarker\n    (progn\n      (write-line message __batchMarker)\n      (close __batchMarker)\n    )\n  )\n)\n{scriptBody}{save}(__batchWriteMarker \"OK\")\n(command \"_.QUIT\" \"_Yes\")\n";
+        var executableContent = runAdditionsBeforePrimaryExecution
+            ? scriptAdditions + scriptBody
+            : scriptBody + scriptAdditions;
+        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(defun __batchWriteMarker (message)\n  (setq __batchMarker (open \"{markerPath}\" \"w\"))\n  (if __batchMarker\n    (progn\n      (write-line message __batchMarker)\n      (close __batchMarker)\n    )\n  )\n)\n{executableContent}{save}(__batchWriteMarker \"OK\")\n(command \"_.QUIT\" \"_Yes\")\n";
     }
 
     private static string EnsureTerminatingNewline(string script) =>
@@ -476,7 +485,7 @@ public static class BatchRunner
             ? script
             : script + Environment.NewLine;
 
-    private static string BuildLispLauncher(string lispPath, string lispExpression, string resultPath, string save)
+    private static string BuildLispLauncher(string lispPath, string lispExpression, string resultPath, string save, string scriptAdditions, bool runAdditionsBeforePrimaryExecution)
     {
         var markerPath = EscapeLispString(resultPath);
         // Keep the launcher script compatible with the Core Console subset: no Visual LISP / COM functions.
@@ -484,7 +493,9 @@ public static class BatchRunner
         // a missing function at load time, or a blocked/untrusted path).  The temporary error
         // handler covers the latter case, while it is installed only for the load phase so
         // errors raised by the routine itself remain per-drawing failures.
-        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(defun __batchWriteMarker (message)\n  (setq __batchMarker (open \"{markerPath}\" \"w\"))\n  (if __batchMarker\n    (progn\n      (write-line message __batchMarker)\n      (close __batchMarker)\n    )\n  )\n)\n(setq __batchOriginalError *error*)\n(defun __batchLoadError (message)\n  (__batchWriteMarker \"{LispLoadFailure}\")\n  (setq *error* __batchOriginalError)\n  (princ)\n)\n(setq *error* __batchLoadError)\n(if (load \"{lispPath}\")\n  (progn\n    (setq *error* __batchOriginalError)\n    {lispExpression}\n    {save}(__batchWriteMarker \"OK\")\n  )\n  (progn\n    (setq *error* __batchOriginalError)\n    (__batchWriteMarker \"{LispLoadFailure}\")\n  )\n)\n(command \"_.QUIT\" \"_Yes\")\n";
+        var additionsBefore = runAdditionsBeforePrimaryExecution ? scriptAdditions : string.Empty;
+        var additionsAfter = runAdditionsBeforePrimaryExecution ? string.Empty : scriptAdditions;
+        return $"(setvar \"FILEDIA\" 0)\n(setvar \"CMDDIA\" 0)\n(defun __batchWriteMarker (message)\n  (setq __batchMarker (open \"{markerPath}\" \"w\"))\n  (if __batchMarker\n    (progn\n      (write-line message __batchMarker)\n      (close __batchMarker)\n    )\n  )\n)\n(setq __batchOriginalError *error*)\n(defun __batchLoadError (message)\n  (__batchWriteMarker \"{LispLoadFailure}\")\n  (setq *error* __batchOriginalError)\n  (princ)\n)\n(setq *error* __batchLoadError)\n(if (load \"{lispPath}\")\n  (progn\n    (setq *error* __batchOriginalError)\n    {additionsBefore}{lispExpression}\n    {additionsAfter}{save}(__batchWriteMarker \"OK\")\n  )\n  (progn\n    (setq *error* __batchOriginalError)\n    (__batchWriteMarker \"{LispLoadFailure}\")\n  )\n)\n(command \"_.QUIT\" \"_Yes\")\n";
     }
 
     private static string RequiredBatchOutputDirectory(string? batchOutputDirectory) =>
@@ -866,6 +877,8 @@ public static class BatchRunner
         summary.AppendLine($"- Save drawings after processing: {settings.SaveAfterRun}");
         summary.AppendLine($"- Keep generated scripts: {settings.KeepScripts}");
         summary.AppendLine($"- Create per-job log files: {settings.CreateLogFiles}");
+        summary.AppendLine($"- Script additions: {string.Join(", ", ScriptAdditionLibrary.Resolve(settings.ScriptAdditionIds).Select(addition => addition.Name).DefaultIfEmpty("None"))}");
+        summary.AppendLine($"- Run script additions before primary execution: {settings.RunScriptAdditionsBeforePrimaryExecution}");
         summary.AppendLine($"- Work directory: {settings.WorkDirectory}");
         summary.AppendLine($"- Results directory: {settings.ResultsDirectory}");
 
@@ -932,6 +945,7 @@ public sealed class BatchSettings : INotifyPropertyChanged
 {
     private string? _acCoreConsolePath = @"C:\Program Files\Autodesk\AutoCAD 2026\accoreconsole.exe";
     private string? _executionDefinitionPath;
+    private string? _routinePath;
     private string? _sharedInputFilePath;
     private string? _lispFilePath;
     private string? _fileListPath;
@@ -943,11 +957,15 @@ public sealed class BatchSettings : INotifyPropertyChanged
     private bool _saveAfterRun;
     private bool _keepScripts;
     private bool _createLogFiles = true;
+    private List<string> _scriptAdditionIds = [];
+    private bool _runScriptAdditionsBeforePrimaryExecution;
     private string? _workDirectory;
     private string? _resultsDirectory;
 
     public string? AcCoreConsolePath { get => _acCoreConsolePath; set => SetField(ref _acCoreConsolePath, value); }
     public string? ExecutionDefinitionPath { get => _executionDefinitionPath; set => SetField(ref _executionDefinitionPath, value); }
+    /// <summary>GUI-selected routine path. The CLI requires ExecutionDefinitionPath and does not use this field.</summary>
+    public string? RoutinePath { get => _routinePath; set => SetField(ref _routinePath, value); }
     public string? SharedInputFilePath { get => _sharedInputFilePath; set => SetField(ref _sharedInputFilePath, value); }
     [JsonIgnore]
     public ResolvedExecutionDefinition? ExecutionDefinition { get; private set; }
@@ -962,6 +980,8 @@ public sealed class BatchSettings : INotifyPropertyChanged
     public bool SaveAfterRun { get => _saveAfterRun; set => SetField(ref _saveAfterRun, value); }
     public bool KeepScripts { get => _keepScripts; set => SetField(ref _keepScripts, value); }
     public bool CreateLogFiles { get => _createLogFiles; set => SetField(ref _createLogFiles, value); }
+    public List<string> ScriptAdditionIds { get => _scriptAdditionIds; set => SetField(ref _scriptAdditionIds, value ?? []); }
+    public bool RunScriptAdditionsBeforePrimaryExecution { get => _runScriptAdditionsBeforePrimaryExecution; set => SetField(ref _runScriptAdditionsBeforePrimaryExecution, value); }
     public string? WorkDirectory { get => _workDirectory; set => SetField(ref _workDirectory, value); }
     public string? ResultsDirectory { get => _resultsDirectory; set => SetField(ref _resultsDirectory, value); }
 
@@ -984,6 +1004,7 @@ public sealed class BatchSettings : INotifyPropertyChanged
         if (string.IsNullOrWhiteSpace(RoutineFunction) || RoutineFunction.Any(char.IsWhiteSpace) || RoutineFunction.IndexOfAny(['(', ')', '"']) >= 0)
             throw new ArgumentException("The filename in LispFilePath must be a valid AutoLISP function name, e.g. PROCESSDRAWING.lsp.");
         ValidateLispFunctionSignature(LispFilePath, RoutineFunction);
+        ScriptAdditionLibrary.Resolve(ScriptAdditionIds);
         NormalizeBatchInputsAndSettings(baseDirectory);
     }
 
@@ -994,6 +1015,7 @@ public sealed class BatchSettings : INotifyPropertyChanged
     {
         AcCoreConsolePath = RequiredFile(AcCoreConsolePath, "AcCoreConsolePath", baseDirectory);
         var definition = LoadExecutionDefinition(baseDirectory);
+        ScriptAdditionLibrary.Resolve(ScriptAdditionIds);
         NormalizeBatchInputsAndSettings(baseDirectory);
         return definition;
     }

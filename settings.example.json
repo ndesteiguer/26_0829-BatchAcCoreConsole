@@ -8,6 +8,8 @@
   "SaveAfterRun": false,
   "KeepScripts": false,
   "CreateLogFiles": true,
+  "ScriptAdditionIds": [],
+  "RunScriptAdditionsBeforePrimaryExecution": false,
   "WorkDirectory": "C:\\BatchJobs\\work",
   "ResultsDirectory": "C:\\BatchJobs\\results"
 }

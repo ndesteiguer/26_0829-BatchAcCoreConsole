@@ -33,10 +33,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _failedRerunPromptDismissed;
     private string _executionDetails = "Choose an execution definition JSON to inspect its routine contract.";
     private bool _requiresSharedInputFile;
+    private bool _isApplyingScriptAdditionSelection;
+    private ExecutionDefinitionDraft? _unsavedExecutionDefinition;
 
     public MainWindow()
     {
         InitializeComponent();
+        foreach (var option in ScriptAdditionOptions)
+            option.PropertyChanged += ScriptAdditionOption_PropertyChanged;
         Settings.PropertyChanged += Settings_PropertyChanged;
         DataContext = this;
         RefreshExecutionDefinitionInfo();
@@ -66,12 +70,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             if (ReferenceEquals(_settings, value)) return;
             _settings.PropertyChanged -= Settings_PropertyChanged;
+            _unsavedExecutionDefinition = null;
             _isFileListInput = string.IsNullOrWhiteSpace(value.FileListPath)
                 ? string.IsNullOrWhiteSpace(value.InputDirectory)
                 : true;
             if (_isFileListInput && !string.IsNullOrWhiteSpace(value.FileListPath)) value.Recursive = false;
             SetField(ref _settings, value);
             _settings.PropertyChanged += Settings_PropertyChanged;
+            ApplyScriptAdditionSelection();
             OnPropertyChanged(nameof(IsFileListInput));
             OnPropertyChanged(nameof(IsInputDirectoryInput));
             RefreshExecutionDefinitionInfo();
@@ -80,6 +86,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public ObservableCollection<PreflightDiagnostic> Diagnostics { get; } = [];
     public ObservableCollection<QueueItem> Queue { get; } = [];
+    public ObservableCollection<ScriptAdditionOption> ScriptAdditionOptions { get; } =
+        new(ScriptAdditionLibrary.Entries.Select(definition => new ScriptAdditionOption(definition)));
 
     public bool IsRunning
     {
@@ -244,8 +252,91 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void BrowseCoreConsole_Click(object sender, RoutedEventArgs e) =>
         ChooseFile("Executables (*.exe)|*.exe|All files (*.*)|*.*", path => Settings.AcCoreConsolePath = path);
 
+    private void BrowseRoutine_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ConfirmProfileEdit()) return;
+        var dialog = new OpenFileDialog { Filter = "Routines (*.lsp;*.scr)|*.lsp;*.scr|AutoLISP (*.lsp)|*.lsp|Core Console scripts (*.scr)|*.scr" };
+        if (dialog.ShowDialog(this) != true) return;
+
+        Settings.RoutinePath = dialog.FileName;
+        Settings.ExecutionDefinitionPath = null;
+        _unsavedExecutionDefinition = null;
+        var sidecarPath = Path.ChangeExtension(dialog.FileName, ".execution.json");
+        if (File.Exists(sidecarPath))
+        {
+            try
+            {
+                var definition = ExecutionDefinition.Load(sidecarPath);
+                if (!string.Equals(Path.GetFullPath(definition.RoutinePath), Path.GetFullPath(dialog.FileName), StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException("Its routine path does not match the selected routine.");
+
+                var useSaved = MessageBox.Show(
+                    this,
+                    $"A matching execution definition was found:\n\n{sidecarPath}\n\nUse the saved definition? Choose No to configure this routine directly.",
+                    Title,
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question,
+                    MessageBoxResult.Yes);
+                if (useSaved == MessageBoxResult.Yes)
+                {
+                    Settings.ExecutionDefinitionPath = sidecarPath;
+                    RefreshExecutionDefinitionInfo();
+                    return;
+                }
+            }
+            catch (Exception exception)
+            {
+                MessageBox.Show(this, $"The adjacent execution definition will not be used because it is invalid.\n\n{exception.Message}", Title, MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        if (Path.GetExtension(dialog.FileName).Equals(".scr", StringComparison.OrdinalIgnoreCase))
+        {
+            RefreshExecutionDefinitionInfo();
+            return;
+        }
+
+        PromptForLispDefinition();
+    }
+
     private void BrowseExecutionDefinition_Click(object sender, RoutedEventArgs e) =>
-        ChooseFile("Execution definitions (*.execution.json;*.json)|*.execution.json;*.json|All files (*.*)|*.*", path => Settings.ExecutionDefinitionPath = path);
+        ChooseFile("Execution definitions (*.execution.json;*.json)|*.execution.json;*.json|All files (*.*)|*.*", path =>
+        {
+            var definition = ExecutionDefinition.Load(path);
+            Settings.ExecutionDefinitionPath = path;
+            Settings.RoutinePath = definition.RoutinePath;
+            _unsavedExecutionDefinition = null;
+        });
+
+    private void PromptForLispDefinition()
+    {
+        var choice = MessageBox.Show(
+            this,
+            "This LISP routine has no selected execution definition.\n\nChoose Yes to select an existing definition, No to create one, or Cancel to leave the routine unconfigured.",
+            Title,
+            MessageBoxButton.YesNoCancel,
+            MessageBoxImage.Question);
+        if (choice == MessageBoxResult.Yes)
+        {
+            BrowseExecutionDefinition_Click(this, new RoutedEventArgs());
+            return;
+        }
+        if (choice != MessageBoxResult.No || string.IsNullOrWhiteSpace(Settings.RoutinePath)) return;
+
+        var wizard = new ExecutionDefinitionWizard(Settings.RoutinePath);
+        if (wizard.ShowDialog() != true) return;
+        if (wizard.SavedDefinitionPath is not null)
+        {
+            Settings.ExecutionDefinitionPath = wizard.SavedDefinitionPath;
+            _unsavedExecutionDefinition = null;
+        }
+        else
+        {
+            _unsavedExecutionDefinition = wizard.UnsavedDefinition;
+            Settings.ExecutionDefinitionPath = null;
+        }
+        RefreshExecutionDefinitionInfo();
+    }
 
     private void BrowseSharedInputFile_Click(object sender, RoutedEventArgs e) =>
         ChooseFile("All files (*.*)|*.*", path => Settings.SharedInputFilePath = path);
@@ -382,9 +473,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var output = new GuiBatchOutput(AppendOutput);
         var progress = new Progress<BatchProgressEvent>(HandleProgress);
 
+        string? transientProfilePath = null;
+        var transientDefinitionPaths = new List<string>();
         try
         {
-            _lastRun = await BatchRunner.RunWithResultAsync([_profilePath!], output, progress, _cancellation.Token);
+            var profileDirectory = Path.GetDirectoryName(_profilePath!)!;
+            var runSettings = PrepareSettingsForExecution(profileDirectory, transientDefinitionPaths);
+            transientProfilePath = Path.Combine(profileDirectory, $".BatchAcCoreConsole-gui-{Guid.NewGuid():N}.json");
+            File.WriteAllText(transientProfilePath, JsonSerializer.Serialize(runSettings, ProfileJsonOptions));
+            _lastRun = await BatchRunner.RunWithResultAsync([transientProfilePath], output, progress, _cancellation.Token);
             _completedRunProfileSnapshot = SerializeSettings();
             IsResultsStale = false;
             _failedRerunPromptDismissed = false;
@@ -401,7 +498,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
         finally
         {
-            _cancellation.Dispose();
+            if (transientProfilePath is not null) _ = TryDeleteFile(transientProfilePath);
+            foreach (var path in transientDefinitionPaths) _ = TryDeleteFile(path);
+            _cancellation?.Dispose();
             _cancellation = null;
             IsRunning = false;
             if (_lastRun is not null) UpdateBatchProgressStatus();
@@ -418,7 +517,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool RunPreflight()
     {
         var baseDirectory = _profilePath is null ? Environment.CurrentDirectory : Path.GetDirectoryName(_profilePath)!;
-        var report = BatchPreflight.Check(Settings, baseDirectory);
+        var transientDefinitionPaths = new List<string>();
+        BatchPreflightReport report;
+        try
+        {
+            report = BatchPreflight.Check(PrepareSettingsForExecution(baseDirectory, transientDefinitionPaths), baseDirectory);
+        }
+        catch (Exception exception)
+        {
+            report = new BatchPreflightReport(null, [], [], [new PreflightDiagnostic(PreflightSeverity.Error, "Execution definition", exception.Message)]);
+        }
+        finally
+        {
+            foreach (var path in transientDefinitionPaths) _ = TryDeleteFile(path);
+        }
         Diagnostics.Clear();
         foreach (var diagnostic in report.Diagnostics) Diagnostics.Add(diagnostic);
 
@@ -509,7 +621,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void Settings_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         OnPropertyChanged(nameof(Settings));
-        if (e.PropertyName is nameof(BatchSettings.ExecutionDefinitionPath) or nameof(BatchSettings.SharedInputFilePath))
+        if (e.PropertyName == nameof(BatchSettings.ScriptAdditionIds))
+            ApplyScriptAdditionSelection();
+        if (e.PropertyName is nameof(BatchSettings.ExecutionDefinitionPath) or nameof(BatchSettings.RoutinePath) or nameof(BatchSettings.SharedInputFilePath))
             RefreshExecutionDefinitionInfo();
         if (_lastRun is null || IsRunning) return;
 
@@ -519,12 +633,110 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         IsResultsStale = differsFromCompletedRun;
     }
 
+    private void ScriptAdditionOption_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (_isApplyingScriptAdditionSelection || e.PropertyName != nameof(ScriptAdditionOption.IsSelected)) return;
+        Settings.ScriptAdditionIds = ScriptAdditionOptions
+            .Where(option => option.IsSelected)
+            .Select(option => option.Id)
+            .ToList();
+    }
+
+    private void ApplyScriptAdditionSelection()
+    {
+        _isApplyingScriptAdditionSelection = true;
+        try
+        {
+            var selectedIds = new HashSet<string>(Settings.ScriptAdditionIds, StringComparer.OrdinalIgnoreCase);
+            foreach (var option in ScriptAdditionOptions)
+                option.IsSelected = selectedIds.Contains(option.Id);
+        }
+        finally
+        {
+            _isApplyingScriptAdditionSelection = false;
+        }
+    }
+
+    private BatchSettings PrepareSettingsForExecution(string baseDirectory, ICollection<string> transientDefinitionPaths)
+    {
+        var runSettings = JsonSerializer.Deserialize<BatchSettings>(SerializeSettings())
+            ?? throw new InvalidOperationException("Could not prepare the selected routine for execution.");
+        if (!string.IsNullOrWhiteSpace(runSettings.ExecutionDefinitionPath))
+            return runSettings;
+
+        var routinePath = runSettings.RoutinePath;
+        if (string.IsNullOrWhiteSpace(routinePath))
+            throw new ArgumentException("Select a routine or execution definition.");
+        routinePath = Path.GetFullPath(Path.IsPathFullyQualified(routinePath) ? routinePath : Path.Combine(baseDirectory, routinePath));
+        if (!File.Exists(routinePath))
+            throw new FileNotFoundException("Selected routine not found", routinePath);
+
+        ExecutionDefinitionDraft draft;
+        if (_unsavedExecutionDefinition is not null)
+        {
+            draft = _unsavedExecutionDefinition with { RoutinePath = routinePath };
+        }
+        else if (Path.GetExtension(routinePath).Equals(".scr", StringComparison.OrdinalIgnoreCase))
+        {
+            draft = new ExecutionDefinitionDraft(ExecutionType.BlindScript, routinePath, string.Empty, null);
+        }
+        else
+        {
+            throw new ArgumentException("Select or create an execution definition for this LISP routine.");
+        }
+
+        var transientPath = Path.Combine(Path.GetTempPath(), $"BatchAcCoreConsole-definition-{Guid.NewGuid():N}.execution.json");
+        var definition = new Dictionary<string, string?>
+        {
+            ["type"] = ToWireType(draft.Type),
+            ["routine"] = draft.RoutinePath,
+            ["function"] = draft.Function,
+            ["outputFormat"] = draft.OutputFormat
+        };
+        if (draft.Type == ExecutionType.BlindScript) definition.Remove("function");
+        if (draft.OutputFormat is null) definition.Remove("outputFormat");
+        File.WriteAllText(transientPath, JsonSerializer.Serialize(definition, ProfileJsonOptions));
+        transientDefinitionPaths.Add(transientPath);
+        runSettings.ExecutionDefinitionPath = transientPath;
+        return runSettings;
+    }
+
+    private static string ToWireType(ExecutionType type) => type switch
+    {
+        ExecutionType.BlindScript => "blind-script",
+        ExecutionType.BlindLisp => "blind-lisp",
+        ExecutionType.LispResult => "lisp-result",
+        ExecutionType.LispReport => "lisp-report",
+        ExecutionType.LispInputReport => "lisp-input-report",
+        _ => throw new ArgumentOutOfRangeException(nameof(type), type, "Unsupported execution type.")
+    };
+
+    private static bool TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path)) File.Delete(path);
+            return true;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
     private void RefreshExecutionDefinitionInfo()
     {
+        if (_unsavedExecutionDefinition is not null)
+        {
+            RequiresSharedInputFile = _unsavedExecutionDefinition.Type == ExecutionType.LispInputReport;
+            var outputType = _unsavedExecutionDefinition.OutputFormat?.ToUpperInvariant() ?? "None";
+            ExecutionDetails = $"Entry point: {_unsavedExecutionDefinition.Function}{Environment.NewLine}Shared input file: {(RequiresSharedInputFile ? "Yes" : "No")}{Environment.NewLine}Output file type: {outputType}{Environment.NewLine}Definition: Run once (not saved)";
+            return;
+        }
         if (string.IsNullOrWhiteSpace(Settings.ExecutionDefinitionPath))
         {
             RequiresSharedInputFile = false;
-            ExecutionDetails = "Choose an execution definition JSON to inspect its routine contract.";
+            ExecutionDetails = Path.GetExtension(Settings.RoutinePath ?? string.Empty).Equals(".scr", StringComparison.OrdinalIgnoreCase)
+                ? "Direct script run: no execution definition is required."
+                : "Choose a routine. LISP routines require a saved or wizard-created execution definition.";
             return;
         }
 
@@ -543,7 +755,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 ? Path.GetFileName(definition.RoutinePath)
                 : definition.Function!;
             var sharedInput = definition.RequiresSharedInputFile ? "Yes" : "No";
-            var outputType = definition.OutputFormat ?? "None";
+            var outputType = definition.OutputFormat?.ToUpperInvariant() ?? "None";
             ExecutionDetails = $"Entry point: {entryPoint}{Environment.NewLine}Shared input file: {sharedInput}{Environment.NewLine}Output file type: {outputType}";
         }
         catch (Exception exception)

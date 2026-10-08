@@ -6,5 +6,6 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="BatchAcCore.Tests" />
+    <EmbeddedResource Include="..\script-addition-library.json" Link="script-addition-library.json" LogicalName="BatchAcCore.ScriptAdditionLibrary.json" />
   </ItemGroup>
 </Project>
