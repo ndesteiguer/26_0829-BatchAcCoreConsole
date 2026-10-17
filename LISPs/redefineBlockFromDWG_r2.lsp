@@ -5,7 +5,8 @@
 ;;;   (R2-RedefineBlocksFromCsv "C:\\path\\blocks.csv" "C:\\path\\output")
 ;;;
 ;;; This file is intentionally limited to core AutoLISP: no Visual LISP, COM,
-;;; dialogs, anonymous error handlers, or user input prompts.
+;;; dialogs, anonymous error handlers, or user input prompts. ATTSYNC is not
+;;; available in AcCoreConsole, so existing references are recreated directly.
 
 (defun r2:trim (value / first last)
   (setq first 1
@@ -136,25 +137,163 @@
   found
 )
 
-;;; A named error handler is required here. Core Console can invoke *error*
-;;; after an ATTSYNC command failure; an anonymous lambda masks that failure.
-(defun r2:attsync-error (message)
-  (setq r2:attsync-message message
-        *error* r2:attsync-old-error)
-  (princ (strcat "\nR2: ATTSYNC failed: " message))
+(defun r2:layout-block-p (block-record / name)
+  (setq name (strcase (cdr (assoc 2 block-record))))
+  (or (= name "*MODEL_SPACE")
+      (and (>= (strlen name) 12)
+           (= (substr name 1 12) "*PAPER_SPACE")))
+)
+
+(defun r2:inserts-in-space (space-name block-name / current data inserts)
+  (setq current (entnext (tblobjname "BLOCK" space-name))
+        inserts nil)
+  (while (and current
+              (/= (cdr (assoc 0 (entget current))) "ENDBLK"))
+    (setq data (entget current))
+    (if (and (= (cdr (assoc 0 data)) "INSERT")
+             (= (strcase (cdr (assoc 2 data))) (strcase block-name)))
+      (setq inserts (cons current inserts)))
+    (setq current (entnext current)))
+  (reverse inserts)
+)
+
+(defun r2:layout-inserts (block-name / block-record inserts)
+  (setq block-record (tblnext "BLOCK" T)
+        inserts nil)
+  (while block-record
+    (if (r2:layout-block-p block-record)
+      (setq inserts
+        (append inserts
+          (r2:inserts-in-space (cdr (assoc 2 block-record)) block-name))))
+    (setq block-record (tblnext "BLOCK")))
+  inserts
+)
+
+(defun r2:attribute-values (insert / current data values tag value)
+  (setq current (if (= 1 (cdr (assoc 66 (entget insert)))) (entnext insert))
+        values nil)
+  (while (and current
+              (/= (cdr (assoc 0 (setq data (entget current)))) "SEQEND"))
+    (if (= (cdr (assoc 0 data)) "ATTRIB")
+      (progn
+        (setq tag (cdr (assoc 2 data))
+              value (cdr (assoc 1 data)))
+        (if tag
+          (setq values (cons (cons tag (if value value "")) values)))))
+    (setq current (entnext current)))
+  values
+)
+
+(defun r2:attribute-value (tag values / value)
+  (foreach item values
+    (if (= (strcase tag) (strcase (car item)))
+      (setq value (cdr item))))
+  value
+)
+
+(defun r2:apply-attribute-values (insert values / current data tag value cell)
+  (setq current (if (= 1 (cdr (assoc 66 (entget insert)))) (entnext insert)))
+  (while (and current
+              (/= (cdr (assoc 0 (setq data (entget current)))) "SEQEND"))
+    (if (= (cdr (assoc 0 data)) "ATTRIB")
+      (progn
+        (setq tag (cdr (assoc 2 data))
+              value (if tag (r2:attribute-value tag values)))
+        (if value
+          (progn
+            (setq cell (assoc 1 data))
+            (if cell
+              (entmod (subst (cons 1 value) cell data)))))))
+    (setq current (entnext current)))
   (princ)
 )
 
-(defun r2:synchronize-attributes (block-name / command-result)
-  (setq r2:attsync-message nil
-        r2:attsync-old-error *error*
-        *error* r2:attsync-error)
-  ; command-s receives the complete prompt sequence, including the default Yes.
-  (setq command-result (command-s "_.ATTSYNC" "_Name" block-name ""))
-  (setq *error* r2:attsync-old-error)
-  (if r2:attsync-message
-    (strcat "Failed: ATTSYNC: " r2:attsync-message)
-    "Redefined and synchronized")
+(defun r2:copy-insert-code (old-data new-data code / old-cell new-cell)
+  (if (setq old-cell (assoc code old-data))
+    (if (setq new-cell (assoc code new-data))
+      (subst old-cell new-cell new-data)
+      (append new-data (list old-cell)))
+    new-data)
+)
+
+(defun r2:preserve-insert-properties (old-insert new-insert / old-data new-data code)
+  (setq old-data (entget old-insert)
+        new-data (entget new-insert))
+  ; Keep reference-level overrides. Attribute-level properties intentionally
+  ; come from the redefined block, which is the observable ATTSYNC behavior.
+  (foreach code '(8 6 48 60 62 370 390 420 430 440)
+    (setq new-data (r2:copy-insert-code old-data new-data code)))
+  (entmod new-data)
+)
+
+(defun r2:insert-sequence (insert / current data entities)
+  (setq entities (list insert))
+  (if (= 1 (cdr (assoc 66 (entget insert))))
+    (progn
+      (setq current (entnext insert))
+      (while current
+        (setq data (entget current)
+              entities (cons current entities))
+        (if (= (cdr (assoc 0 data)) "SEQEND")
+          (setq current nil)
+          (setq current (entnext current))))))
+  entities
+)
+
+(defun r2:delete-insert (insert)
+  (foreach entity (r2:insert-sequence insert)
+    (entdel entity))
+)
+
+(defun r2:reference-layout (insert-data)
+  (if (assoc 410 insert-data)
+    (cdr (assoc 410 insert-data))
+    "Model")
+)
+
+(defun r2:recreate-reference (old-insert block-name / old-data values layout
+                                                          before new-insert x-scale
+                                                          y-scale rotation point)
+  (setq old-data (entget old-insert)
+        values (r2:attribute-values old-insert)
+        layout (r2:reference-layout old-data)
+        point (cdr (assoc 10 old-data))
+        x-scale (if (assoc 41 old-data) (cdr (assoc 41 old-data)) 1.0)
+        y-scale (if (assoc 42 old-data) (cdr (assoc 42 old-data)) x-scale)
+        rotation (if (assoc 50 old-data) (cdr (assoc 50 old-data)) 0.0))
+  (setvar "CTAB" layout)
+  (setq before (entlast))
+  (command-s "_.-INSERT" block-name point x-scale y-scale rotation)
+  (if (setq new-insert (r2:find-insert-after before block-name))
+    (progn
+      (r2:preserve-insert-properties old-insert new-insert)
+      (r2:apply-attribute-values new-insert values)
+      (r2:delete-insert old-insert)
+      T)
+    nil)
+)
+
+(defun r2:synchronize-references (block-name / old-tab old-attreq old-attdia
+                                             inserts insert synchronized failed)
+  (setq old-tab (getvar "CTAB")
+        old-attreq (getvar "ATTREQ")
+        old-attdia (getvar "ATTDIA")
+        inserts (r2:layout-inserts block-name)
+        synchronized 0
+        failed nil)
+  (setvar "ATTREQ" 0)
+  (setvar "ATTDIA" 0)
+  (foreach insert inserts
+    (if (r2:recreate-reference insert block-name)
+      (setq synchronized (1+ synchronized))
+      (setq failed T)))
+  (setvar "ATTREQ" old-attreq)
+  (setvar "ATTDIA" old-attdia)
+  (setvar "CTAB" old-tab)
+  (if failed
+    "Failed: one or more block references could not be recreated"
+    (strcat "Redefined and synchronized " (itoa synchronized)
+            " existing reference(s)"))
 )
 
 (defun r2:redefine-one (block-name source-file / block-record source-path before
@@ -179,7 +318,7 @@
       (if (setq inserted (r2:find-insert-after before block-name))
         (progn
           (entdel inserted)
-          (r2:synchronize-attributes block-name))
+          (r2:synchronize-references block-name))
         "Failed: redefinition could not be verified")))
 )
 
