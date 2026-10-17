@@ -137,36 +137,18 @@
   found
 )
 
-(defun r2:layout-block-p (block-record / name)
-  (setq name (strcase (cdr (assoc 2 block-record))))
-  (or (= name "*MODEL_SPACE")
-      (and (>= (strlen name) 12)
-           (= (substr name 1 12) "*PAPER_SPACE")))
-)
-
-(defun r2:inserts-in-space (space-name block-name / current data inserts)
-  (setq current (entnext (tblobjname "BLOCK" space-name))
+(defun r2:drawing-inserts (block-name / selection index inserts)
+  ;; "_X" searches the whole drawing database, including model space and all
+  ;; paper-space layouts.  This is more reliable than navigating block-table
+  ;; records, whose entity chains do not consistently expose layout contents.
+  (setq selection (ssget "_X" (list '(0 . "INSERT") (cons 2 block-name)))
+        index 0
         inserts nil)
-  (while (and current
-              (/= (cdr (assoc 0 (entget current))) "ENDBLK"))
-    (setq data (entget current))
-    (if (and (= (cdr (assoc 0 data)) "INSERT")
-             (= (strcase (cdr (assoc 2 data))) (strcase block-name)))
-      (setq inserts (cons current inserts)))
-    (setq current (entnext current)))
+  (if selection
+    (while (< index (sslength selection))
+      (setq inserts (cons (ssname selection index) inserts)
+            index (1+ index))))
   (reverse inserts)
-)
-
-(defun r2:layout-inserts (block-name / block-record inserts)
-  (setq block-record (tblnext "BLOCK" T)
-        inserts nil)
-  (while block-record
-    (if (r2:layout-block-p block-record)
-      (setq inserts
-        (append inserts
-          (r2:inserts-in-space (cdr (assoc 2 block-record)) block-name))))
-    (setq block-record (tblnext "BLOCK")))
-  inserts
 )
 
 (defun r2:attribute-values (insert / current data values tag value)
@@ -278,7 +260,7 @@
   (setq old-tab (getvar "CTAB")
         old-attreq (getvar "ATTREQ")
         old-attdia (getvar "ATTDIA")
-        inserts (r2:layout-inserts block-name)
+        inserts (r2:drawing-inserts block-name)
         synchronized 0
         failed nil)
   (setvar "ATTREQ" 0)
