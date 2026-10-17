@@ -1,0 +1,6 @@
+{
+  "type": "lisp-input-report",
+  "routine": "redefineBlockFromDWG_r2.lsp",
+  "function": "R2-RedefineBlocksFromCsv",
+  "outputFormat": "csv"
+}
