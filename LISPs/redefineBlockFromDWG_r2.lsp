@@ -227,6 +227,41 @@
     (entdel entity))
 )
 
+(defun r2:layer-locked-p (layer-name / layer-data flags)
+  (setq layer-data (tblsearch "LAYER" layer-name)
+        flags (if layer-data (cdr (assoc 70 layer-data)) 0))
+  (/= 0 (logand flags 4))
+)
+
+(defun r2:set-layer-lock (layer-name locked / layer-entity layer-data flags new-flags)
+  (setq layer-entity (tblobjname "LAYER" layer-name)
+        layer-data (if layer-entity (entget layer-entity)))
+  (if layer-data
+    (progn
+      (setq flags (cdr (assoc 70 layer-data))
+            new-flags (if locked
+                        (logior flags 4)
+                        (- flags (logand flags 4))))
+      (if (entmod (subst (cons 70 new-flags) (assoc 70 layer-data) layer-data))
+        T
+        nil))
+    nil)
+)
+
+(defun r2:unlock-reference-layers (insert / entity layer-name unlocked)
+  ;; Attributes may have an explicitly assigned layer, so inspect every entity
+  ;; in the INSERT sequence rather than only the INSERT itself.
+  (setq unlocked nil)
+  (foreach entity (r2:insert-sequence insert)
+    (setq layer-name (cdr (assoc 8 (entget entity))))
+    (if (and layer-name
+             (r2:layer-locked-p layer-name)
+             (r2:set-layer-lock layer-name nil)
+             (not (member layer-name unlocked)))
+      (setq unlocked (cons layer-name unlocked))))
+  unlocked
+)
+
 (defun r2:reference-layout (insert-data)
   (if (assoc 410 insert-data)
     (cdr (assoc 410 insert-data))
@@ -256,19 +291,28 @@
 )
 
 (defun r2:synchronize-references (block-name / old-tab old-attreq old-attdia
-                                             inserts insert synchronized failed)
+                                             inserts insert synchronized failed
+                                             unlocked-layers reference-layers layer-name)
   (setq old-tab (getvar "CTAB")
         old-attreq (getvar "ATTREQ")
         old-attdia (getvar "ATTDIA")
         inserts (r2:drawing-inserts block-name)
         synchronized 0
-        failed nil)
+        failed nil
+        unlocked-layers nil)
   (setvar "ATTREQ" 0)
   (setvar "ATTDIA" 0)
   (foreach insert inserts
+    (setq reference-layers (r2:unlock-reference-layers insert))
+    (foreach layer-name reference-layers
+      (if (not (member layer-name unlocked-layers))
+        (setq unlocked-layers (cons layer-name unlocked-layers))))
     (if (r2:recreate-reference insert block-name)
       (setq synchronized (1+ synchronized))
       (setq failed T)))
+  ;; Restore only layers that were locked before the routine changed them.
+  (foreach layer-name unlocked-layers
+    (r2:set-layer-lock layer-name T))
   (setvar "ATTREQ" old-attreq)
   (setvar "ATTDIA" old-attdia)
   (setvar "CTAB" old-tab)
